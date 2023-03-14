@@ -1,11 +1,11 @@
-Wejure: a decentralized social network
+# Wejure: a decentralized social network
 
-# Features
+## Features
 - runs on a peer-to-peer network
 - secure and immutable data 
 - transparency of data usage and source code
 
-# Getting started
+## Getting started
 Wejure is developed using shadow-cljs (which requires node.js, yarn and java SDK).
 The following packages is needed.
 - [shadow-cljs](https://github.com/thheller/shadow-cljs)
@@ -15,5 +15,5 @@ The following packages is needed.
 
 To run or configure Wejure on your local environment, first start a local server by the command `yarn dev`. Then visit [localhost:8020](http://localhost:8020).
 
-# User's Guide
+## User's Guide
 Users will need to create an account or sign in from the top right corner of the main page. After login, users will be able to freely send messages to other users online.
