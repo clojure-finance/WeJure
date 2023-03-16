@@ -1,0 +1,9 @@
+{
+"version":3,
+"file":"module$starter$js$test.js",
+"lineCount":11,
+"mappings":"A;;AAGOA,QAASA,kCAAS,EAAG;AACxB,MAAIC,WAAWC,MAAOC,CAAAA,OAAQC,CAAAA,UAAWC,CAAAA,QAASC,CAAAA,IAAlD;AACAH,SAAQI,CAAAA,MAAOC,CAAAA,IAAKC,CAAAA,QAApB,CAA6BR,QAA7B,EAAuC,SAAvC,CAAA;AAFwB;AAH5B;AAAA,IAAAS,yBAAA,EAAA;AAGgBV;AAAAA,sBAAAA,CAAAA,SAAAA,GAAAA,iCAAAA;;",
+"sources":["starter/js/test.js"],
+"sourcesContent":["import GUN from 'goog:module$node_modules$gun$browser';\r\nimport 'goog:module$node_modules$gun$sea';\r\n\r\nexport function changetxt() {\r\n    var textAtom = window.starter.components.testPage.text;\r\n    starter.helper.atom.atom_set(textAtom, \"Goodbye\");\r\n}"],
+"names":["changetxt","textAtom","window","starter","components","testPage","text","helper","atom","atom_set","$jscomp$tmp$exports$module$name"]
+}

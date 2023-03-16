@@ -1,0 +1,1 @@
+{"version":3,"sources":["starter/components/haha.cljs"],"mappings":";;AAEA,AAAA,AAAKA","names":["starter.components.haha/a"],"sourcesContent":["(ns starter.components.haha)\n\n(def a \"haha\")"]}

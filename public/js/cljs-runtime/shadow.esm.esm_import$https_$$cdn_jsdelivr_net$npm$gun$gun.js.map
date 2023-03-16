@@ -1,0 +1,9 @@
+{
+"version":3,
+"file":"shadow.esm.esm_import$https_$$cdn_jsdelivr_net$npm$gun$gun.js",
+"lineCount":3,
+"mappings":"AAAAA,IAAKC,CAAAA,OAAL,CAAa,4DAAb,CAAA;AACAC,MAAOC,CAAAA,GAAIC,CAAAA,+CAAX,GAA6DA,+CAA7D;;",
+"sources":["shadow.esm.esm_import$https_$$cdn_jsdelivr_net$npm$gun$gun.js"],
+"sourcesContent":["goog.provide(\"shadow.esm.esm_import$https_$$cdn_jsdelivr_net$npm$gun$gun\");\nshadow.esm.esm_import$https_$$cdn_jsdelivr_net$npm$gun$gun = esm_import$https_$$cdn_jsdelivr_net$npm$gun$gun;\n"],
+"names":["goog","provide","shadow","esm","esm_import$https_$$cdn_jsdelivr_net$npm$gun$gun"]
+}

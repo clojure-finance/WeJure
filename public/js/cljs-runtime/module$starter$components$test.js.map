@@ -1,0 +1,9 @@
+{
+"version":3,
+"file":"module$starter$components$test.js",
+"lineCount":8,
+"mappings":"AAAO,IAAIA,uCAAOA,QAAQ,CAACC,CAAD,CAAI;AAC1B,SAAOA,CAAP,GAAWA,CAAX;AAD0B,CAAvB;AAAP;AAAA,IAAAC,iCAAA,EAAA;AAAWF;AAAAA,8BAAAA,CAAAA,IAAAA,GAAAA,oCAAAA;;",
+"sources":["starter/components/test.js"],
+"sourcesContent":["export var func = function(x) {\r\n    return x * x;\r\n}"],
+"names":["func","x","$jscomp$tmp$exports$module$name"]
+}

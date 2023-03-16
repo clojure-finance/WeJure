@@ -1,0 +1,1 @@
+{"version":3,"sources":["starter/registrationPage.cljs"],"mappings":";;AAEA,AAAA,AAAMA;AAAN,AAAA,AAAA,AAAA","names":["starter.components.registrationPage/registrationPage"],"sourcesContent":["(ns starter.components.registrationPage)\n\n(defn registrationPage [] \n    [:div \"hoi\"])"]}

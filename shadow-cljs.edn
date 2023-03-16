@@ -1,0 +1,14 @@
+{:source-paths ["src"]
+
+ :dependencies [[reagent "1.1.1" :exclusions [cljsjs/react cljsjs/react-dom]]
+                [arttuka/reagent-material-ui "5.2.4-0"]
+                [district0x/cljs-ipfs-http-client "1.0.6"]]
+
+ :builds {:app {:target :browser
+                :output-dir "public/js"
+                :asset-path "js"
+                :modules {:main {:entries [wejure.core]}}
+                :devtools {:before-load wejure.core/stop
+                           :after-load wejure.core/start
+                           :http-root "public"
+                           :http-port 8020}}}}

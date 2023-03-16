@@ -1,0 +1,1 @@
+["^ ","~$atom-set",["^ ","~:row",4,"~:col",1,"~:fixed-arities",["~#set",[2]],"~:name","^0","~:ns","~$starter.helper.ato","~:top-ns","^7","~:arities",["^ ","~i2",["^ ","~:ret",["^4",["~:nil"]],"~:arglist-str","[target-atom value]"]],"~:type","~:fn"],"~:filename","C:\\Users\\jason\\Downloads\\Projects\\reagent-shadow-cljs-starter\\src\\starter\\helper\\atom.cljs"]

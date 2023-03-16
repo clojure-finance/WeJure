@@ -1,0 +1,9 @@
+{
+"version":3,
+"file":"shadow.esm.esm_import$https_$$cdn_skypack_dev$gun.js",
+"lineCount":3,
+"mappings":"AAAAA,IAAKC,CAAAA,OAAL,CAAa,mDAAb,CAAA;AACAC,MAAOC,CAAAA,GAAIC,CAAAA,sCAAX,GAAoDA,sCAApD;;",
+"sources":["shadow.esm.esm_import$https_$$cdn_skypack_dev$gun.js"],
+"sourcesContent":["goog.provide(\"shadow.esm.esm_import$https_$$cdn_skypack_dev$gun\");\nshadow.esm.esm_import$https_$$cdn_skypack_dev$gun = esm_import$https_$$cdn_skypack_dev$gun;\n"],
+"names":["goog","provide","shadow","esm","esm_import$https_$$cdn_skypack_dev$gun"]
+}
