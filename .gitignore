@@ -1,1 +1,4 @@
+src/wejure/components/ipfsTest.cljs
+src/wejure/components/testPage.cljs
 src/wejure/js/radata
+src/wejure/js/test.js

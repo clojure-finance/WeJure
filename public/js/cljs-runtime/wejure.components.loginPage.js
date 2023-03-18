@@ -23,11 +23,11 @@ cljs.core.swap_BANG_.cljs$core$IFn$_invoke$arity$4(details,cljs.core.assoc,new c
 
 return module$wejure$js$accSystem.login(cljs.core.deref(name),cljs.core.deref(password));
 });
-wejure.components.loginPage.login_page = (function wejure$components$loginPage$login_page(p__12033){
-var map__12034 = p__12033;
-var map__12034__$1 = cljs.core.__destructure_map(map__12034);
-var details = cljs.core.get.cljs$core$IFn$_invoke$arity$2(map__12034__$1,new cljs.core.Keyword(null,"details","details",1956795411));
-var step = cljs.core.get.cljs$core$IFn$_invoke$arity$2(map__12034__$1,new cljs.core.Keyword(null,"step","step",1288888124));
+wejure.components.loginPage.login_page = (function wejure$components$loginPage$login_page(p__12387){
+var map__12388 = p__12387;
+var map__12388__$1 = cljs.core.__destructure_map(map__12388);
+var details = cljs.core.get.cljs$core$IFn$_invoke$arity$2(map__12388__$1,new cljs.core.Keyword(null,"details","details",1956795411));
+var step = cljs.core.get.cljs$core$IFn$_invoke$arity$2(map__12388__$1,new cljs.core.Keyword(null,"step","step",1288888124));
 var name = reagent.core.atom.cljs$core$IFn$_invoke$arity$1(null);
 var password = reagent.core.atom.cljs$core$IFn$_invoke$arity$1(null);
 var loading = reagent.core.atom.cljs$core$IFn$_invoke$arity$1(false);

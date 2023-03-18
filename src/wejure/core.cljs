@@ -20,7 +20,7 @@
        [:div
         {:style {:height "100%"}}
         (case @step                                               ;; the step atom determines which page to show, value will be changed in the respective pages
-          0 [title-page]
+          0 [title-page {:details details :step step}]
           1 [registration-page {:details details :step step}]
           2 [login-page {:details details :step step}]
           3 [main-page {:details details}]

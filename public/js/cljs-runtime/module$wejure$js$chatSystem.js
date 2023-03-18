@@ -29,26 +29,22 @@ async function storeMessage$$module$wejure$js$chatSystem(recipient, messageInput
       sender = data;
     });
     let pass = await SEA.secret(receiverEPub, senderPair);
-    let message = '\x3cspan style\x3d"color: red"\x3e' + sender + ": \x3c/span\x3e" + messageInput;
+    let message = {"sender":sender, "content":messageInput};
     let encryptedMessage = await SEA.encrypt(message, pass);
     await gun$$module$wejure$js$chatSystem.get("chat").get(senderPair.pub).get(receiverPub).get(timeStamp).put(encryptedMessage);
     await gun$$module$wejure$js$chatSystem.get("chat").get(receiverPub).get(senderPair.pub).get(timeStamp).put(encryptedMessage);
-    await gun$$module$wejure$js$chatSystem.get("chat").get(senderPair.pub).get(receiverPub).map().once(async(data, key) => {
-      let dec = await SEA.decrypt(data, pass);
-    });
     wejure.components.chatPage.atom_reset(window.wejure.components.chatPage.message, "");
   }
 }
 async function displayMessage$$module$wejure$js$chatSystem(peer, prevPeer) {
-  await wejure.components.chatPage.atom_reset(window.wejure.components.chatPage.message_list, "");
+  let id = window.wejure.components.chatPage.counter;
   let selfPair = JSON.parse(sessionStorage.getItem("pair"));
   if (prevPeer != "Select recipient" && prevPeer != "") {
     let prevPeerPub = "";
     await gun$$module$wejure$js$chatSystem.get("~@" + prevPeer).once((data, key) => {
       prevPeerPub = Object.keys(data)[1].slice(1);
     });
-    console.log("prevPeer: " + prevPeer + "prevPeerPub: " + prevPeerPub);
-    await gun$$module$wejure$js$chatSystem.get("chat").get(selfPair.pub).get(prevPeerPub).map().off();
+    gun$$module$wejure$js$chatSystem.get("chat").get(selfPair.pub).get(prevPeerPub).off();
   }
   if (peer != "Select recipient") {
     let peerPub = "";
@@ -66,7 +62,8 @@ async function displayMessage$$module$wejure$js$chatSystem(peer, prevPeer) {
       await gun$$module$wejure$js$chatSystem.get("~" + selfPair.pub).get("alias").once((data, key) => {
         sender = data;
       });
-      wejure.components.chatPage.atom_str(window.wejure.components.chatPage.message_list, "\x3cp\x3e" + key$jscomp$0 + " " + decryptedMessage + "\x3c/p\x3e");
+      decryptedMessage["timestamp"] = key$jscomp$0;
+      wejure.components.chatPage.atom_conj(window.wejure.components.chatPage.message_list, decryptedMessage);
     });
   }
 }

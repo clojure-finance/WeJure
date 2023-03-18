@@ -4,13 +4,14 @@ import 'gun/sea';
 var gun = GUN({ peers: ['http:localhost:8001/gun'] });              // host configured in relay.js
 var user = gun.user().recall({sessionStorage: true});
 
-export var login = function(name, password) {                       // function for logging in
+export function login(name, password) {                       // function for logging in
     user.auth(name, password, ({ err }) => {
         if (err) {
             wejure.components.loginPage.stopLoading();
             alert(err);     
         } 
         else {
+            sessionStorage.setItem("username", name);
             gun.get("users");                                       // retrieve the user list in gunDB
             wejure.components.loginPage.stopLoading();
             wejure.components.loginPage.toMainPage();               // redirect to the main page
@@ -18,7 +19,7 @@ export var login = function(name, password) {                       // function 
     });
 }
 
-export var register = function(name, password) {                    // function for registering the account
+export function register(name, password) {                    // function for registering the account
     user.create(name, password, ({ err }) => {
         if (err) {
             wejure.components.registrationPage.stopLoading();
@@ -34,9 +35,22 @@ export var register = function(name, password) {                    // function 
     return true;
 }    
 
-export var logout = function() {                                    // function for logging out
+export function logout() {                                    // function for logging out
     user.leave();
+    sessionStorage.clear();
     window.location.reload(true);
 }
 
+export function isLogged() {
+    if (sessionStorage.getItem("recall") != null) {
+        return true;
+    }
+    else {
+        return false;
+    }
+}
+
+export function getUserName() {
+    return sessionStorage.getItem("username");
+}
 
