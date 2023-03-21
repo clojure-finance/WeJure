@@ -36,16 +36,8 @@ async function storeMessage$$module$wejure$js$chatSystem(recipient, messageInput
     wejure.components.chatPage.atom_reset(window.wejure.components.chatPage.message, "");
   }
 }
-async function displayMessage$$module$wejure$js$chatSystem(peer, prevPeer) {
-  let id = window.wejure.components.chatPage.counter;
+async function displayMessage$$module$wejure$js$chatSystem(peer) {
   let selfPair = JSON.parse(sessionStorage.getItem("pair"));
-  if (prevPeer != "Select recipient" && prevPeer != "") {
-    let prevPeerPub = "";
-    await gun$$module$wejure$js$chatSystem.get("~@" + prevPeer).once((data, key) => {
-      prevPeerPub = Object.keys(data)[1].slice(1);
-    });
-    gun$$module$wejure$js$chatSystem.get("chat").get(selfPair.pub).get(prevPeerPub).off();
-  }
   if (peer != "Select recipient") {
     let peerPub = "";
     let peerEPub = "";
@@ -63,7 +55,7 @@ async function displayMessage$$module$wejure$js$chatSystem(peer, prevPeer) {
         sender = data;
       });
       decryptedMessage["timestamp"] = key$jscomp$0;
-      wejure.components.chatPage.atom_conj(window.wejure.components.chatPage.message_list, decryptedMessage);
+      wejure.components.chatPage.add_message(window.wejure.components.chatPage.message_list, decryptedMessage);
     });
   }
 }

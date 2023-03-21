@@ -1,3 +1,5 @@
+.clj-kondo
+.lsp
 src/wejure/components/ipfsTest.cljs
 src/wejure/components/testPage.cljs
 src/wejure/js/radata

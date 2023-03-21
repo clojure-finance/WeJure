@@ -41,17 +41,8 @@ export async function storeMessage(recipient, messageInput) {                   
     }
 }
 
-export async function displayMessage(peer, prevPeer) {                                                      // display the messages when a peer is selected
-    let id = window.wejure.components.chatPage.counter;
+export async function displayMessage(peer) {                                                      // display the messages when a peer is selected
     let selfPair = JSON.parse(sessionStorage.getItem('pair'));                                              // get the key pair of the user
-    if (prevPeer != "Select recipient" && prevPeer != "") {                                                 
-        let prevPeerPub = "";
-        await gun.get('~@'+prevPeer).once((data, key) => {
-            prevPeerPub = Object.keys(data)[1].slice(1);      
-        });
-        //console.log("prevPeer: " + prevPeer + " prevPeerPub: " + prevPeerPub);
-        gun.get('chat').get(selfPair.pub).get(prevPeerPub).off();      
-    }
     if (peer != "Select recipient") {
         let peerPub = "";
         let peerEPub = "";
@@ -69,7 +60,7 @@ export async function displayMessage(peer, prevPeer) {                          
                 sender = data;
             });
             decryptedMessage["timestamp"] = key;                                                                        // add timestamp to the message output
-            wejure.components.chatPage.atom_conj(window.wejure.components.chatPage.message_list, decryptedMessage);     // add the message for screen output
+            wejure.components.chatPage.add_message(window.wejure.components.chatPage.message_list, decryptedMessage);     // add the message for screen output
         });    
     }
 }
