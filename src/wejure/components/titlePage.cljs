@@ -3,8 +3,9 @@
             ["../js/accSystem" :as acc]))
 
 (defn title-page [{:keys [details step]}]
-  (when (= (acc/isLogged) true)              ;; direct to mainPage instead of titlePage when user is logged
-    (swap! details assoc :name (acc/getUserName))
+  (when (= (acc/isLogged) true)                          ;; direct to mainPage instead of titlePage when user is logged
+    (swap! details assoc :name (acc/getUserName))        ;; restore the username to the details atom
+    (acc/setIconCID (get @details :name) details)        ;; restore the icon CID to the details atom
     (reset! step 3))
   [:div
    {:style {:height "100%"

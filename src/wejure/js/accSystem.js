@@ -1,7 +1,7 @@
 import GUN from 'gun';
 import 'gun/sea';
 
-var gun = GUN({ peers: ['http:localhost:8001/gun'] });              // host configured in relay.js
+var gun = GUN({ peers: ['http:localhost:8001/gun'] });        // host configured in relay.js
 var user = gun.user().recall({sessionStorage: true});
 
 export function login(name, password) {                       // function for logging in
@@ -19,14 +19,15 @@ export function login(name, password) {                       // function for lo
     });
 }
 
-export function register(name, password) {                    // function for registering the account
+export function register(name, password, cid) {                     // function for registering the account
     user.create(name, password, ({ err }) => {
         if (err) {
             wejure.components.registrationPage.stopLoading();
             alert(err);
         } 
         else {
-            gun.get("users").set(name);                             // add the username into the user list in gunDB
+        gun.get("users").set(name);                                 // add the username into the user list in gunDB
+            gun.get("iconCID").get(name).put(cid);                  // store the IPFS CID of the user into gunDB
             alert("Account created successfully");
             wejure.components.registrationPage.stopLoading();
             wejure.components.registrationPage.toLoginPage();       // redirect to the login page
@@ -35,13 +36,13 @@ export function register(name, password) {                    // function for re
     return true;
 }    
 
-export function logout() {                                    // function for logging out
+export function logout() {                                          // function for logging out
     user.leave();
     sessionStorage.clear();
     window.location.reload(true);
 }
 
-export function isLogged() {
+export function isLogged() {                                        // check if the user has logged in before
     if (sessionStorage.getItem("recall") != null) {
         return true;
     }
@@ -54,3 +55,8 @@ export function getUserName() {
     return sessionStorage.getItem("username");
 }
 
+export function setIconCID(name, details) {                             // add the user's icon CID to the details atom with :icon-cid key
+    gun.get("iconCID").get(name).once((data) => {
+        wejure.components.loginPage.atom_assoc_cid(details, data);      // call the function in ClojureScript to perform map assoc to add the CID
+    });                                                                 
+}

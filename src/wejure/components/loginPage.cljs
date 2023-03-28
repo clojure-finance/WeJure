@@ -20,11 +20,15 @@
 (defn ^:export stopLoading []
   (reset! @loading-ref false))
 
+(defn ^:export atom-assoc-cid [details cid]           ;; function for adding the icon CID to the details map
+  (swap! details assoc :icon-cid cid))
+
 (defn authenticate [name password details loading step]
   (reset! loading-ref loading)
   (reset! loading true)
   (println (str "account: " (:account @details) " loading: " @loading))
   (swap! details assoc :name @name)
+  (acc/setIconCID @name details)
   (acc/login @name @password))
 
 (defn login-page [{:keys [details step]}]

@@ -1,6 +1,7 @@
 (ns wejure.core
   (:require [reagent.core :as r]
             [reagent.dom :as rdom]
+            ;;[wejure.components.testPage :refer [test-page]]
             [cljs-ipfs-api.core :as icore :refer [init-ipfs]]
             [wejure.components.mainPage :refer [main-page]]
             [wejure.components.navigationBar :refer [navigation-bar]]
@@ -20,6 +21,7 @@
        [:div
         {:style {:height "100%"}}
         (case @step                                               ;; the step atom determines which page to show, value will be changed in the respective pages
+          ;;-1 [test-page]
           0 [title-page {:details details :step step}]
           1 [registration-page {:details details :step step}]
           2 [login-page {:details details :step step}]

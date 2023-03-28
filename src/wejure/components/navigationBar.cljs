@@ -5,11 +5,9 @@
         [reagent-mui.material.toolbar :refer [toolbar]]
         [reagent-mui.material.button :refer [button]]
         [reagent-mui.material.typography :refer [typography]]
-        ["../js/accSystem" :as acc]
-    )
-)
+        ["../js/accSystem" :as acc]))
 
-;;(def ipfsUrl "https://ipfs.infura.io/ipfs/")
+(def ipfsUrl "https://wejure.infura-ipfs.io/ipfs/")               ;; IPFS gateway for retrieving files from IPFS
 
 (defn registerFunction [step details]
   (reset! step 1))
@@ -51,15 +49,13 @@
                        :sx {:font-size "12px" :margin "0 20px 0 0"}}
                       (:name @details)]
                      
-                     ;;Profile picture function to be added
-                     ;;[:div
-                     ;; {:style {:margin "0 20px 0 0"}}
-                     ;; [:img
-                        ;;{:src (str ipfsUrl (:profileHash @details))
-                        ;;{:src " "
-                         ;;:width 50
-                         ;;:height 50
-                         ;;:style {:border-radius "50%" }}]]
+                     [:div
+                       {:style {:margin "0 20px 0 0"}}
+                     [:img
+                        {:src (str ipfsUrl (get @details :icon-cid))        ;; retrieve the user icon image from IPFS
+                         :width 50
+                         :height 50
+                         :style {:border-radius "50%" }}]]
                      
                      (if (= @step 3)
                        [button

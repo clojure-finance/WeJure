@@ -35,17 +35,13 @@
   (reset! loading true)
   (println (str "account: " (:account @details) " loading: " @loading))
   (swap! details assoc :name @name)
-  ;;function for adding profile pic photo: to be developed later
-  ;;(ifiles/add @photo
-  ;;            (fn [err files]
-  ;;              (if err
-  ;;                (println (str "err: " err))
-  ;;                (let [hash (. (. js/JSON parse files) -Hash)]
-  ;;                  (println hash)))))
-  ;;(let [photo-details (ifiles/add @photo)]
-  ;;  (println photo-details))
-  (acc/register @name @password)
-)
+  (let [blob (js/Blob. (clj->js [@photo]) #js {:type "image/*"})]          ;; convert the image to JavaScript blob object
+    (ifiles/add blob {:path (.-name @photo)}                               ;; upload the image to IPFS
+                (fn [err files]
+                  (if err
+                    (println (str "err: " err))
+                    (let [cid (. (. js/JSON parse files) -Hash)]           ;; get the image file CID after completing the upload to IPFS
+                      (acc/register @name @password cid)))))))             ;; register the user account and store the CID in gunDB
 
 (defn registration-page [{:keys [details step]}]
   (let [name (r/atom nil) password (r/atom nil) pwdConfirm (r/atom nil) profilePic (r/atom nil) loading (r/atom false)]

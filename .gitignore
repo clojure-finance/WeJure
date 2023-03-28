@@ -1,6 +1,9 @@
-.clj-kondo
-.lsp
+.clj-kondo/
+.lsp/
+.shadow-cljs/
 src/wejure/components/ipfsTest.cljs
 src/wejure/components/testPage.cljs
 src/wejure/js/radata
 src/wejure/js/test.js
+public/js/
+node_modules/

@@ -1,9 +1,0 @@
-{
-"version":3,
-"file":"module$wejure$js$test.js",
-"lineCount":11,
-"mappings":"A;;AAGOA,QAASA,qCAAa,CAACC,SAAD,EAAYC,YAAZ,CAA0B;AACnD,MAAIC,cAAcC,MAAOC,CAAAA,MAAOC,CAAAA,UAAWC,CAAAA,QAASC,CAAAA,SAApD;AACAH,QAAOC,CAAAA,UAAWC,CAAAA,QAASE,CAAAA,SAA3B,CAAqCN,WAArC,EAAkD,CAAC,YAAaF,SAAd,EAAyB,UAAWC,YAApC,CAAlD,CAAA;AAFmD;AAHvD;AAAA,IAAAQ,wBAAA,EAAA;AAGgBV;AAAAA,qBAAAA,CAAAA,aAAAA,GAAAA,oCAAAA;;",
-"sources":["wejure/js/test.js"],
-"sourcesContent":["import GUN from 'goog:module$node_modules$gun$browser';\r\nimport 'goog:module$node_modules$gun$sea';\r\n\r\nexport function updateMessage(recipient, messageInput) {\r\n    let messageAtom = window.wejure.components.chatPage.test_list;\r\n    wejure.components.chatPage.atom_conj(messageAtom, {\"recipient\": recipient, \"message\": messageInput});\r\n}"],
-"names":["updateMessage","recipient","messageInput","messageAtom","window","wejure","components","chatPage","test_list","atom_conj","$jscomp$tmp$exports$module$name"]
-}
