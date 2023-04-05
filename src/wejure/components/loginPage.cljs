@@ -23,7 +23,7 @@
 (defn ^:export atom-assoc-cid [details cid]           ;; function for adding the icon CID to the details map
   (swap! details assoc :icon-cid cid))
 
-(defn authenticate [name password details loading step]
+(defn authenticate [name password details loading]
   (reset! loading-ref loading)
   (reset! loading true)
   (println (str "account: " (:account @details) " loading: " @loading))
@@ -95,6 +95,6 @@
           {:variant "contained"
            :disable-elevation true
            :disabled (or (emptyField name) (emptyField password) @loading)
-           :on-click #(authenticate name password details loading step)}
+           :on-click #(authenticate name password details loading)}
           "Submit"]
          [circular-progress {:sx {:margin "10px" :visibility (when (not @loading) "hidden")}}]]]])))

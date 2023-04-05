@@ -1,7 +1,7 @@
 {:source-paths ["src"]
 
- :dependencies [[reagent "1.1.1" :exclusions [cljsjs/react cljsjs/react-dom]]
-                [arttuka/reagent-material-ui "5.2.4-0"]
+ :dependencies [[reagent "1.2.0" :exclusions [cljsjs/react cljsjs/react-dom]]
+                [arttuka/reagent-material-ui "5.11.12-0"]
                 [district0x/cljs-ipfs-http-client "1.0.6"]]
 
  :builds {:app {:target :browser

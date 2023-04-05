@@ -30,7 +30,7 @@
 (defn ^:export stopLoading []
   (reset! @loading-ref false))
 
-(defn submitProfile [name password photo details loading step]
+(defn submitProfile [name password photo details loading]
   (reset! loading-ref loading)
   (reset! loading true)
   (println (str "account: " (:account @details) " loading: " @loading))
@@ -46,7 +46,7 @@
 (defn registration-page [{:keys [details step]}]
   (let [name (r/atom nil) password (r/atom nil) pwdConfirm (r/atom nil) profilePic (r/atom nil) loading (r/atom false)]
     (reset! step-ref step)
-    (init-ipfs)
+    (init-ipfs {:host "	http://127.0.0.1:5001"})                           ;; initialize IPFS with localhost (need to run a IPFS client locally)
     (fn []
       [:div
        {:style {:height "100%" :display "flex" :justify-content "center" :align-items "center"}}
@@ -156,6 +156,6 @@
           {:variant "contained"
            :disable-elevation true
            :disabled (or (emptyField name) (emptyField password) (emptyPhoto profilePic) (not (is-pwd-matched password pwdConfirm)) @loading)
-           :on-click #(submitProfile name password profilePic details loading step)}
+           :on-click #(submitProfile name password profilePic details loading)}
           "Submit"]
          [circular-progress {:sx {:margin "10px" :visibility (when (not @loading) "hidden")}}]]]])))

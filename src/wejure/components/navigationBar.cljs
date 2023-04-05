@@ -9,13 +9,13 @@
 
 (def ipfsUrl "https://wejure.infura-ipfs.io/ipfs/")               ;; IPFS gateway for retrieving files from IPFS
 
-(defn registerFunction [step details]
+(defn registerFunction [step]
   (reset! step 1))
 
-(defn loginFunction [step details]
+(defn loginFunction [step]
   (reset! step 2))
 
-(defn logoutFunction [step details]
+(defn logoutFunction [step]
   (acc/logout)
   (reset! step 0))
 
@@ -72,15 +72,15 @@
                   [button
                     {:color "inherit"
                       :variant "outlined"
-                      :on-click #(logoutFunction step details)}
+                      :on-click #(logoutFunction step)}
                     "Logout"]]
               [:div
                [button
                 {:color "inherit"
-                 :on-click #(registerFunction step details)}
+                 :on-click #(registerFunction step)}
                 "Sign Up"]
                [button
                 {:color "inherit"
-                 :on-click #(loginFunction step details)}
+                 :on-click #(loginFunction step)}
                 "Login"]]
               )]])

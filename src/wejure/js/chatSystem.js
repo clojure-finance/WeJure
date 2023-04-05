@@ -14,7 +14,7 @@ export async function init(username) {                                          
 }
 
 export async function storeMessage(recipient, messageInput) {                   // store the message in gunDB
-    if (recipient == "Select recipient" || recipient == "") {
+    if (recipient == "") {
         alert("Select a peer first!");
     }
     else {
@@ -41,27 +41,25 @@ export async function storeMessage(recipient, messageInput) {                   
     }
 }
 
-export async function displayMessage(peer) {                                                      // display the messages when a peer is selected
-    let selfPair = JSON.parse(sessionStorage.getItem('pair'));                                              // get the key pair of the user
-    if (peer != "Select recipient") {
-        let peerPub = "";
-        let peerEPub = "";
-        await gun.get('~@'+peer).once((data, key) => {                                                      // get the public key of the peer
-            peerPub = Object.keys(data)[1].slice(1);      
+export async function displayMessage(peer) {                                                            // display the messages when a peer is selected
+    let selfPair = JSON.parse(sessionStorage.getItem('pair'));                                          // get the key pair of the user
+    let peerPub = "";
+    let peerEPub = "";
+    await gun.get('~@'+peer).once((data, key) => {                                                      // get the public key of the peer
+        peerPub = Object.keys(data)[1].slice(1);      
+    });
+    await gun.get('~'+peerPub).get('epub').once((data, key) => {                                        // get the encryption public key of the peer
+        peerEPub = data;     
+    });
+    let passphrase = await SEA.secret(peerEPub, selfPair);                                              // get the decryption key
+    await gun.get('chat').get(selfPair.pub).get(peerPub).map().once(async (data, key) => {              // scan through the stored messages
+        let decryptedMessage = await SEA.decrypt(data, passphrase);                                     // decrypt the message
+        let sender = "";
+        await gun.get('~'+selfPair.pub).get('alias').once((data, key) => {
+            sender = data;
         });
-        await gun.get('~'+peerPub).get('epub').once((data, key) => {                                        // get the encryption public key of the peer
-            peerEPub = data;     
-        });
-        let passphrase = await SEA.secret(peerEPub, selfPair);                                              // get the decryption key
-        await gun.get('chat').get(selfPair.pub).get(peerPub).map().once(async (data, key) => {              // scan through the stored messages
-            let decryptedMessage = await SEA.decrypt(data, passphrase);                                     // decrypt the message
-            let sender = "";
-            await gun.get('~'+selfPair.pub).get('alias').once((data, key) => {
-                sender = data;
-            });
-            decryptedMessage["timestamp"] = key;                                                                        // add timestamp to the message output
-            wejure.components.chatPage.add_message(window.wejure.components.chatPage.message_list, decryptedMessage);     // add the message for screen output
-        });    
-    }
+        decryptedMessage["timestamp"] = key;                                                                          // add timestamp to the message output
+        wejure.components.chatPage.add_message(window.wejure.components.chatPage.message_list, decryptedMessage);     // add the message for screen output
+    });      
 }
 

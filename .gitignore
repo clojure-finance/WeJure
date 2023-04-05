@@ -6,4 +6,4 @@ src/wejure/components/testPage.cljs
 src/wejure/js/radata
 src/wejure/js/test.js
 public/js/
-node_modules/
+node_modules

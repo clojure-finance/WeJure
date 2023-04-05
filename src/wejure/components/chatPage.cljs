@@ -1,12 +1,18 @@
 (ns wejure.components.chatPage
-  (:require [reagent.core :as r] 
-            [reagent-mui.material.text-field :refer [text-field]]
+  (:require ["../js/chatSystem" :as chat]
+            [reagent-mui.material.box :refer [box]]
             [reagent-mui.material.button :refer [button]]
-            [reagent-mui.material.typography :refer [typography]]
+            [reagent-mui.material.form-control :refer [form-control]]
+            [reagent-mui.material.grid :refer [grid]]
+            [reagent-mui.material.input-label :refer [input-label]]
+            [reagent-mui.material.menu-item :refer [menu-item]]
+            [reagent-mui.material.paper :refer [paper]]
             [reagent-mui.material.select :refer [select]]
-            ["../js/chatSystem" :as chat]))
+            [reagent-mui.material.text-field :refer [text-field]]
+            [reagent-mui.material.typography :refer [typography]]
+            [reagent.core :as r]))
 
-(def recipient-list (r/atom ["Select recipient"]))
+(def recipient-list (r/atom []))
 
 (def selected-recipient (r/atom ""))
 
@@ -16,67 +22,93 @@
 
 (def username (atom ""))
 
+;; automatically scroll the message box to the bottom
+(defn async-scroll [delay]
+  (let [promise (js/Promise. (fn [resolve reject]
+                               (js/setTimeout #(resolve (.scrollIntoView (.getElementById js/document "bottom"))) delay)))]
+    promise))
+
 ;; used in chatSystem.js, replicate the reset! function in clojure
 (defn ^:export atom-reset [target-atom value]
-  (reset! target-atom value)
-  target-atom)
+  (reset! target-atom value))
 
 ;; used in chatSystem.js, replicate the conj function used with swap! in clojure
 (defn ^:export atom-conj [target-atom value]                  
-  (swap! target-atom conj value)
-  target-atom)
+  (swap! target-atom conj value))
 
 ;; used in chatSystem.js, show the updated messages in chatbox
 (defn ^:export add-message [target-atom value] 
   (let [sender (get (js->clj value :keywordize-keys true) :sender)]
   (when (and (not= (get (js->clj value :keywordize-keys true) :timestamp) (get (js->clj (last @target-atom) :keywordize-keys true) :timestamp))
              (or (= sender @username) (= sender @selected-recipient)))
-    (swap! target-atom conj value)
-    target-atom)))
+    (async-scroll 100)
+    (swap! target-atom conj value))))
 
 (defn chat-page [{:keys [details step]}]
   (reset! username (get @details :name))
-  (when (= 1 (count @recipient-list))
+  (when (= 0 (count @recipient-list))
     (chat/init @username))
   [:div
-   [typography
-    {:variant "h4"
-     :component "div"}
-    "Direct Messages"]
-   [:div
-    [:label "Send to: "]
-    [:select {:value @selected-recipient
-              :on-change (fn [event]
-                           (reset! selected-recipient (-> event .-target .-value))                ;; perform peer selection
-                           (reset! message-list [])                                               ;; clear the previous message output
-                           (chat/displayMessage @selected-recipient))}                            ;; display all the stored messages between the user and the peer
-     (for [recipient @recipient-list]                                                             ;; retrieve the user list and add them in the peer selection box
-       (when (not= recipient @username)
-         [:option {:key recipient :value recipient} recipient]))]]
-
-   [:div
-    {:style {:height "600px"
-             :border "2px solid #ccc"
-             :display "flex"
-             :flex-direction "column"}}
-    (for [message-line (js->clj @message-list :keywordize-keys true)]                             ;; show all the messages in the message list in the chatbox
-      ^{:key message-line} [:p (get message-line :timestamp) " " [:span {:style {:color "red"}} (get message-line :sender) ":"] " " (get message-line :content)])]
-
-   [:div
-    [:input {:style {:width "100%"}
-             :id "message"
-             :type "text"
-             :placeholder "Send message here"
-             :value @message
-             :on-change (fn [event]
-                          (reset! message (-> event .-target .-value)))}]]
-
-   [:div
-    [button
-     {:variant "contained"
-      :disable-elevation true
-      :size "small"
-      :on-click #(chat/storeMessage @selected-recipient @message)}
-     "send"]]])
+   [grid {:container true :spacing 2 :px "20%" :my 1}                                               ;; using grid layout for the page
+    [grid {:item true :xs 9}
+     [typography
+      {:variant "h4"
+       :component "div"}
+      "Direct Messages"]]
+    
+    [grid {:item true :xs 3}                                                                        ;; select box for selecting message recipient
+     [box {:display "flex" :justify-content "flex-end"}
+      [form-control {:variant "filled" :size "small" :sx {:min-width 200}}
+       [input-label "Recipient"]
+       [select {:value @selected-recipient
+                :auto-width true
+                :style {:background-color "white"}
+                :on-change (fn [event]
+                             (reset! selected-recipient (-> event .-target .-value))
+                             (reset! message-list [])                                               ;; clear the previous message output                           
+                             (chat/displayMessage @selected-recipient))}
+        (for [recipient @recipient-list]                                                            ;; retrieve the user list and add them in the peer selection box
+          [menu-item {:key recipient :value recipient} recipient])]]]]
+    
+    [grid {:item true :xs 12}                                                                       ;; message box
+     [paper {:id "message-box" :variant "outlined" :sx {:height 700 :overflow "auto"}}
+      (for [message-line (js->clj @message-list :keywordize-keys true)]                             ;; show all the messages in the message list in the chatbox
+        (if (= (get message-line :sender) (get @details :name))
+          ^{:key message-line}                                                                      ;; align the message right when it's sent by the user
+          [box {:sx {:m 1 :display "flex" :justify-content "flex-end"}}
+           [typography {:sx {:border 1
+                             :border-radius 4
+                             :px 2
+                             :max-width 600
+                             :background-color "#f8edeb"}}
+            "[" (subs (get message-line :timestamp) 5 11) " " (subs (get message-line :timestamp) 17 22) "] " (get message-line :content)]]
+          ^{:key message-line}                                                                      ;; align the message left when it's sent by the user
+          [box {:sx {:m 1 :display "flex"}}
+           [typography {:sx {:border 1
+                             :border-radius 8
+                             :px 2
+                             :max-width 600
+                             :background-color "#f2f2f2"}}
+            "[" (subs (get message-line :timestamp) 5 11) " " (subs (get message-line :timestamp) 17 22) "] " (get message-line :content)]]))
+      [:div {:id "bottom"}]]]
+    
+    [grid {:item true :xs 11}                                                                      ;; text field for message input 
+     [text-field {:full-width true
+                  :style {:background-color "white"}
+                  :placeholder "Input message"
+                  :variant "outlined"
+                  :size "small"
+                  :value @message
+                  :on-change (fn [event]
+                               (reset! message (-> event .-target .-value)))}]]
+    
+    [grid {:item true :xs 1}                                                                       ;; button for sending message
+     [box {:display "flex" :justify-content "flex-end"}
+     [button
+      {:variant "contained"
+       :disable-elevation true
+       :size "small"
+       :on-click #(chat/storeMessage @selected-recipient @message)}
+      "send"]]]]])
 
 
