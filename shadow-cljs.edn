@@ -2,7 +2,9 @@
 
  :dependencies [[reagent "1.2.0" :exclusions [cljsjs/react cljsjs/react-dom]]
                 [arttuka/reagent-material-ui "5.11.12-0"]
-                [district0x/cljs-ipfs-http-client "1.0.6"]]
+                [district0x/cljs-ipfs-http-client "1.0.6"]
+                [metosin/reitit-frontend "0.6.0"]
+                [metosin/reitit-spec "0.6.0"]]
 
  :builds {:app {:target :browser
                 :output-dir "public/js"

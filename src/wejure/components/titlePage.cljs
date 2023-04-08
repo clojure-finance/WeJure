@@ -2,11 +2,7 @@
   (:require [reagent-mui.material.typography :refer [typography]]
             ["../js/accSystem" :as acc]))
 
-(defn title-page [{:keys [details step]}]
-  (when (= (acc/isLogged) true)                          ;; direct to mainPage instead of titlePage when user is logged
-    (swap! details assoc :name (acc/getUserName))        ;; restore the username to the details atom
-    (acc/setIconCID (get @details :name) details)        ;; restore the icon CID to the details atom
-    (reset! step 3))
+(defn title-page []
   [:div
    {:style {:height "100%"
             :display "flex"

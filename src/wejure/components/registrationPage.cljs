@@ -8,6 +8,7 @@
             [reagent-mui.material.icon-button :refer [icon-button]]
             [reagent-mui.icons.add-a-photo-sharp :refer [add-a-photo-sharp]]
             ["../js/accSystem" :as acc]
+            [reitit.frontend.easy :as reitit-fe]
             [cljs-ipfs-api.core :as icore :refer [init-ipfs]]
             [cljs-ipfs-api.files :as ifiles]))
 
@@ -20,21 +21,17 @@
 (defn is-pwd-matched [password pwdConfirm]
   (= @password @pwdConfirm))
 
-(def step-ref (atom ""))
-
 (def loading-ref (atom ""))
 
 (defn ^:export toLoginPage []
-  (reset! @step-ref 2))
+  (set! js/window.location.href (reitit-fe/href :wejure.core/login)))
 
 (defn ^:export stopLoading []
   (reset! @loading-ref false))
 
-(defn submitProfile [name password photo details loading]
+(defn submitProfile [name password photo loading]
   (reset! loading-ref loading)
   (reset! loading true)
-  (println (str "account: " (:account @details) " loading: " @loading))
-  (swap! details assoc :name @name)
   (let [blob (js/Blob. (clj->js [@photo]) #js {:type "image/*"})]          ;; convert the image to JavaScript blob object
     (ifiles/add blob {:path (.-name @photo)}                               ;; upload the image to IPFS
                 (fn [err files]
@@ -43,9 +40,8 @@
                     (let [cid (. (. js/JSON parse files) -Hash)]           ;; get the image file CID after completing the upload to IPFS
                       (acc/register @name @password cid)))))))             ;; register the user account and store the CID in gunDB
 
-(defn registration-page [{:keys [details step]}]
+(defn registration-page []
   (let [name (r/atom nil) password (r/atom nil) pwdConfirm (r/atom nil) profilePic (r/atom nil) loading (r/atom false)]
-    (reset! step-ref step)
     (init-ipfs {:host "	http://127.0.0.1:5001"})                           ;; initialize IPFS with localhost (need to run a IPFS client locally)
     (fn []
       [:div
@@ -156,6 +152,6 @@
           {:variant "contained"
            :disable-elevation true
            :disabled (or (emptyField name) (emptyField password) (emptyPhoto profilePic) (not (is-pwd-matched password pwdConfirm)) @loading)
-           :on-click #(submitProfile name password profilePic details loading)}
+           :on-click #(submitProfile name password profilePic loading)}
           "Submit"]
          [circular-progress {:sx {:margin "10px" :visibility (when (not @loading) "hidden")}}]]]])))

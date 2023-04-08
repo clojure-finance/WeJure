@@ -12,6 +12,9 @@ export function login(name, password) {                       // function for lo
         } 
         else {
             sessionStorage.setItem("username", name);
+            gun.get("iconCID").get(name).once((data) => {
+                sessionStorage.setItem("iconCID", data);
+            });
             gun.get("users");                                       // retrieve the user list in gunDB
             wejure.components.loginPage.stopLoading();
             wejure.components.loginPage.toMainPage();               // redirect to the main page
@@ -33,30 +36,9 @@ export function register(name, password, cid) {                     // function 
             wejure.components.registrationPage.toLoginPage();       // redirect to the login page
         }
     });
-    return true;
 }    
 
 export function logout() {                                          // function for logging out
     user.leave();
     sessionStorage.clear();
-    window.location.reload(true);
-}
-
-export function isLogged() {                                        // check if the user has logged in before
-    if (sessionStorage.getItem("recall") != null) {
-        return true;
-    }
-    else {
-        return false;
-    }
-}
-
-export function getUserName() {
-    return sessionStorage.getItem("username");
-}
-
-export function setIconCID(name, details) {                             // add the user's icon CID to the details atom with :icon-cid key
-    gun.get("iconCID").get(name).once((data) => {
-        wejure.components.loginPage.atom_assoc_cid(details, data);      // call the function in ClojureScript to perform map assoc to add the CID
-    });                                                                 
 }

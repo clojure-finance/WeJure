@@ -20,7 +20,7 @@
 
 (def message-list (r/atom []))
 
-(def username (atom ""))
+(def username (atom (js/sessionStorage.getItem "username")))
 
 ;; automatically scroll the message box to the bottom
 (defn async-scroll [delay]
@@ -44,8 +44,7 @@
     (async-scroll 100)
     (swap! target-atom conj value))))
 
-(defn chat-page [{:keys [details step]}]
-  (reset! username (get @details :name))
+(defn chat-page []
   (when (= 0 (count @recipient-list))
     (chat/init @username))
   [:div
@@ -73,7 +72,7 @@
     [grid {:item true :xs 12}                                                                       ;; message box
      [paper {:id "message-box" :variant "outlined" :sx {:height 700 :overflow "auto"}}
       (for [message-line (js->clj @message-list :keywordize-keys true)]                             ;; show all the messages in the message list in the chatbox
-        (if (= (get message-line :sender) (get @details :name))
+        (if (= (get message-line :sender) @username)
           ^{:key message-line}                                                                      ;; align the message right when it's sent by the user
           [box {:sx {:m 1 :display "flex" :justify-content "flex-end"}}
            [typography {:sx {:border 1

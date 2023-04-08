@@ -27,16 +27,17 @@ export async function storeMessage(recipient, messageInput) {                   
         await gun.get('~'+receiverPub).get('epub').once((data, key) => {        // get the encryption public key of the receiver
             receiverEPub = data;     
         });
-        let timeStamp = new Date().toUTCString();                               // use the time of sending the message as the key of storing the message
+        let timestamp = new Date().toUTCString();                               // the DateTime of the message sent
+        let timeKey = Date.now();                                               // use the time of sending the message as the key of storing the message
         let sender = "";
         await gun.get('~'+senderPair.pub).get('alias').once((data, key) => {    // get the sender name
             sender = data;
         });
         let pass = await SEA.secret(receiverEPub, senderPair);                  // get the encryption key
-        let message = {"sender": sender, "content": messageInput};
+        let message = {"timestamp": timestamp, "sender": sender, "content": messageInput};
         let encryptedMessage = await SEA.encrypt(message, pass);                                            // encrypt the message
-        await gun.get("chat").get(senderPair.pub).get(receiverPub).get(timeStamp).put(encryptedMessage);    // store the encrypted message in sender's side
-        await gun.get("chat").get(receiverPub).get(senderPair.pub).get(timeStamp).put(encryptedMessage);    // store the encrypted message in receiver's side
+        await gun.get("chat").get(senderPair.pub).get(receiverPub).get(timeKey).put(encryptedMessage);      // store the encrypted message in sender's side
+        await gun.get("chat").get(receiverPub).get(senderPair.pub).get(timeKey).put(encryptedMessage);      // store the encrypted message in receiver's side
         wejure.components.chatPage.atom_reset(window.wejure.components.chatPage.message, "");               // clear the message input box
     }
 }
@@ -51,14 +52,9 @@ export async function displayMessage(peer) {                                    
     await gun.get('~'+peerPub).get('epub').once((data, key) => {                                        // get the encryption public key of the peer
         peerEPub = data;     
     });
-    let passphrase = await SEA.secret(peerEPub, selfPair);                                              // get the decryption key
-    await gun.get('chat').get(selfPair.pub).get(peerPub).map().once(async (data, key) => {              // scan through the stored messages
-        let decryptedMessage = await SEA.decrypt(data, passphrase);                                     // decrypt the message
-        let sender = "";
-        await gun.get('~'+selfPair.pub).get('alias').once((data, key) => {
-            sender = data;
-        });
-        decryptedMessage["timestamp"] = key;                                                                          // add timestamp to the message output
+    let passphrase = await SEA.secret(peerEPub, selfPair);                                                            // get the decryption key
+    await gun.get('chat').get(selfPair.pub).get(peerPub).map().once(async (data, key) => {                            // scan through the stored messages
+        let decryptedMessage = await SEA.decrypt(data, passphrase);                                                   // decrypt the message
         wejure.components.chatPage.add_message(window.wejure.components.chatPage.message_list, decryptedMessage);     // add the message for screen output
     });      
 }
