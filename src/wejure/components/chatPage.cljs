@@ -1,5 +1,5 @@
 (ns wejure.components.chatPage
-  (:require ["../js/chatSystem" :as chat]
+  (:require ["../js/chat" :as chat]
             [reagent-mui.material.box :refer [box]]
             [reagent-mui.material.button :refer [button]]
             [reagent-mui.material.form-control :refer [form-control]]
@@ -33,7 +33,7 @@
   (reset! target-atom value))
 
 ;; used in chatSystem.js, replicate the conj function used with swap! in clojure
-(defn ^:export atom-conj [target-atom value]                  
+(defn ^:export atom-conj [target-atom value]  
   (swap! target-atom conj value))
 
 ;; used in chatSystem.js, show the updated messages in chatbox

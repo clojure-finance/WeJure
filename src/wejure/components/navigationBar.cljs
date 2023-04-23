@@ -5,13 +5,17 @@
             [reitit.frontend.easy :as reitit-fe]
             [reagent-mui.material.button :refer [button]]
             [reagent-mui.material.typography :refer [typography]]
-            ["../js/accSystem" :as acc]))
+            [reagent-mui.material.text-field :refer [text-field]]
+            [reagent-mui.material.avatar :refer [avatar]]
+            ["../js/account" :as acc]))
 
-(def ipfsUrl "https://wejure.infura-ipfs.io/ipfs/")               ;; IPFS gateway for retrieving files from IPFS
+(def ipfs-url "https://ipfs.io/ipfs/")               ;; IPFS gateway for retrieving files from IPFS
 
 (defn logoutFunction []
   (acc/logout)
   (set! js/window.location.href (reitit-fe/href :wejure.core/title)))
+
+(def search-input (r/atom ""))
 
 (defn title-page-bar []
   [app-bar
@@ -19,7 +23,7 @@
     :sx {:background-color "#070707"}}
    [toolbar
     [:img
-     {:src "logo_white.png"
+     {:src "http://localhost:8020/logo_white.png"
       :style {:height "50px"
               :margin "0 20px 0 0"}}]
     [:div
@@ -27,11 +31,11 @@
     [:div
      [button
       {:color "inherit"
-       :on-click #(set! js/window.location.href (reitit-fe/href :wejure.core/register))}
+       :href (reitit-fe/href :wejure.core/register)}
       "Sign Up"]
      [button
       {:color "inherit"
-       :on-click #(set! js/window.location.href (reitit-fe/href :wejure.core/login))}
+       :href (reitit-fe/href :wejure.core/login)}
       "Login"]]]])
 
 (defn sign-in-bar []
@@ -40,7 +44,7 @@
     :sx {:background-color "#070707"}}
    [toolbar
     [:img
-     {:src "logo_white.png"
+     {:src "http://localhost:8020/logo_white.png"
       :style {:height "50px"
               :margin "0 20px 0 0"}}]
     [:div
@@ -48,7 +52,7 @@
     [button
      {:color "inherit"
       :variant "outlined"
-      :on-click #(set! js/window.location.href (reitit-fe/href :wejure.core/title))}
+      :href (reitit-fe/href :wejure.core/title)}
      "Back"]]])
 
 (defn main-page-bar []
@@ -57,35 +61,39 @@
     :sx {:background-color "#070707"}}
    [toolbar
     [:img
-     {:src "logo_white.png"
+     {:src "http://localhost:8020/logo_white.png"
       :style {:height "50px"
               :margin "0 20px 0 0"}}]
     [:div
      {:style {:flex-grow "1"}}]
-
     [:div
      {:style {:display "flex"
-              :align-items "center"}}
-     [:div
-      {:style {:margin "0 20px 0 0" :display "flex" :alignItems "center"}}
-      [typography
-       {:variant "h6"
-        :component "div"
-        :sx {:font-size "12px" :margin "0 20px 0 0"}}
-       (js/sessionStorage.getItem "username")]
-
-      [:div
-       {:style {:margin "0 20px 0 0"}}
-       [:img
-        {:src (str ipfsUrl (js/sessionStorage.getItem "iconCID"))        ;; retrieve the user icon image from IPFS
-         :width 50
-         :height 50
-         :style {:border-radius "50%"}}]]
-      [button
-       {:color "inherit"
-        :variant "outlined"
-        :on-click #(set! js/window.location.href (reitit-fe/href :wejure.core/chat))}
-       "Message"]]
+              :align-items "center"
+              :margin "0 2px 0 0"}}
+     [text-field {:sx {:background-color "white" :mx 2}
+                  :variant "filled"
+                  :placeholder "Search"
+                  :size "small"
+                  :hidden-label true
+                  :value @search-input
+                  :on-change (fn [event]
+                               (reset! search-input (-> event .-target .-value)))
+                  :on-key-down (fn [event]
+                                 (when (= (.-keyCode event) 13)
+                                   (set! js/window.location.href (reitit-fe/href :wejure.core/search {:search-input @search-input}))))}]
+     [typography
+      {:variant "h6"
+       :component "div"
+       :sx {:font-size "12px" :margin "0 20px 0 0"}}
+      (js/sessionStorage.getItem "username")]
+     [avatar {:sx {:width 50 :height 50}
+              :src (str ipfs-url (js/sessionStorage.getItem "iconCID"))}]     ;; retrieve the user icon image from IPFS
+     [button
+      {:color "inherit"
+       :variant "outlined"
+       :sx {:mx 2}
+       :href (reitit-fe/href :wejure.core/chat)}
+      "Message"]
      [button
       {:color "inherit"
        :variant "outlined"
@@ -98,35 +106,91 @@
     :sx {:background-color "#070707"}}
    [toolbar
     [:img
-     {:src "logo_white.png"
+     {:src "http://localhost:8020/logo_white.png"
       :style {:height "50px"
               :margin "0 20px 0 0"}}]
     [:div
      {:style {:flex-grow "1"}}]
-
     [:div
      {:style {:display "flex"
-              :align-items "center"}}
-     [:div
-      {:style {:margin "0 20px 0 0" :display "flex" :alignItems "center"}}
-      [typography
-       {:variant "h6"
-        :component "div"
-        :sx {:font-size "12px" :margin "0 20px 0 0"}}
-       (js/sessionStorage.getItem "username")]
+              :align-items "center"
+              :margin "0 2px 0 0"}}
+     [text-field {:sx {:background-color "white" :mx 2}
+                  :variant "filled"
+                  :placeholder "Search"
+                  :size "small"
+                  :hidden-label true
+                  :value @search-input
+                  :on-change (fn [event]
+                               (reset! search-input (-> event .-target .-value)))
+                  :on-key-down (fn [event]
+                                 (when (= (.-keyCode event) 13)
+                                   (js/sessionStorage.setItem "lastSearched" @search-input)
+                                   (set! js/window.location.href (reitit-fe/href :wejure.core/search {:search-input @search-input}))))}]
+     [typography
+      {:variant "h6"
+       :component "div"
+       :sx {:font-size "12px" :margin "0 20px 0 0"}}
+      (js/sessionStorage.getItem "username")]
+     [avatar {:sx {:width 50 :height 50}
+              :src (str ipfs-url (js/sessionStorage.getItem "iconCID"))}]     ;; retrieve the user icon image from IPFS
+     [button
+      {:color "inherit"
+       :variant "outlined"
+       :sx {:mx 2}
+       :href (reitit-fe/href :wejure.core/home)}
+      "Main Page"]
+     [button
+      {:color "inherit"
+       :variant "outlined"
+       :on-click #(logoutFunction)}
+      "Logout"]]]])
 
-      [:div
-       {:style {:margin "0 20px 0 0"}}
-       [:img
-        {:src (str ipfsUrl (js/sessionStorage.getItem "iconCID"))        ;; retrieve the user icon image from IPFS
-         :width 50
-         :height 50
-         :style {:border-radius "50%"}}]]
-      [button
-       {:color "inherit"
-        :variant "outlined"
-        :on-click #(set! js/window.location.href (reitit-fe/href :wejure.core/main))}
-       "Main Page"]]
+(defn test-page-bar []
+  [app-bar
+   {:position "static"
+    :sx {:background-color "#070707"}}
+   [toolbar
+    [:img
+     {:src "http://localhost:8020/logo_white.png"
+      :style {:height "50px"
+              :margin "0 20px 0 0"}}]
+    [:div
+     {:style {:flex-grow "1"}}]
+  
+    [:div
+     {:style {:display "flex"
+              :align-items "center"
+              :margin "0 2px 0 0"}}
+
+     [text-field {:sx {:background-color "white" :mx 2}
+                  :variant "filled"
+                  :placeholder "Search"
+                  :size "small"
+                  :hidden-label true
+                  :value @search-input
+                  :on-change (fn [event]
+                               (reset! search-input (-> event .-target .-value)))
+                  :on-key-down (fn [event]
+                                 (when (= (.-keyCode event) 13)
+                                   (js/sessionStorage.setItem "lastSearched" @search-input)
+                                   (set! js/window.location.href (reitit-fe/href :wejure.core/search {:search-input @search-input}))))}]
+     [typography
+      {:variant "h6"
+       :component "div"
+       :sx {:font-size "12px" :margin "0 20px 0 0"}}
+      (js/sessionStorage.getItem "username")]
+
+     [avatar {:sx {:width 50 :height 50}
+              :src (str ipfs-url (js/sessionStorage.getItem "iconCID"))}]     ;; retrieve the user icon image from IPFS
+
+     [button
+      {:color "inherit"
+       :variant "outlined"
+       :sx {:mx 2}
+       :href (reitit-fe/href :wejure.core/chat)}
+      "Message"]
+
      [button
       {:color "inherit"
        :variant "outlined"

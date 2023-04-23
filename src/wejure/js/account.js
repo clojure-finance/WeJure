@@ -15,7 +15,6 @@ export function login(name, password) {                       // function for lo
             gun.get("iconCID").get(name).once((data) => {
                 sessionStorage.setItem("iconCID", data);
             });
-            gun.get("users");                                       // retrieve the user list in gunDB
             wejure.components.loginPage.stopLoading();
             wejure.components.loginPage.toMainPage();               // redirect to the main page
         }

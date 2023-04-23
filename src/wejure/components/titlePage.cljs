@@ -1,6 +1,5 @@
 (ns wejure.components.titlePage
-  (:require [reagent-mui.material.typography :refer [typography]]
-            ["../js/accSystem" :as acc]))
+  (:require [reagent-mui.material.typography :refer [typography]]))
 
 (defn title-page []
   [:div

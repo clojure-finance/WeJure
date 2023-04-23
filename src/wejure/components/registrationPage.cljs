@@ -7,7 +7,7 @@
             [reagent-mui.material.circular-progress :refer [circular-progress]]
             [reagent-mui.material.icon-button :refer [icon-button]]
             [reagent-mui.icons.add-a-photo-sharp :refer [add-a-photo-sharp]]
-            ["../js/accSystem" :as acc]
+            ["../js/account" :as acc]
             [reitit.frontend.easy :as reitit-fe]
             [cljs-ipfs-api.core :as icore :refer [init-ipfs]]
             [cljs-ipfs-api.files :as ifiles]))

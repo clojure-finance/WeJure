@@ -4,9 +4,9 @@ import 'gun/sea';
 var gun = GUN({ peers: ['http:localhost:8001/gun'] });                          // host configured in relay.js
 var user = gun.user().recall({sessionStorage: true});
 
-export async function init(username) {                                          // initialize the chat room: add all the users into the select box
+export function init(username) {                                                // initialize the chat room: add all the users into the select box
     let recipientList = window.wejure.components.chatPage.recipient_list;
-    gun.get('users').map().once((user) => {
+    gun.get("users").map().once((user) => {
         if (user != username) {
             wejure.components.chatPage.atom_conj(recipientList, user); 
         }

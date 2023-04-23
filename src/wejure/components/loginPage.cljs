@@ -1,5 +1,5 @@
 (ns wejure.components.loginPage
-  (:require ["../js/accSystem" :as acc]
+  (:require ["../js/account" :as acc]
             [reitit.frontend.easy :as reitit-fe]
             [reagent-mui.material.box :refer [box]]
             [reagent-mui.material.button :refer [button]]
@@ -14,13 +14,10 @@
 (def loading-ref (atom ""))
 
 (defn ^:export toMainPage []
-  (set! js/window.location.href (reitit-fe/href :wejure.core/main)))
+  (set! js/window.location.href (reitit-fe/href :wejure.core/home)))
 
 (defn ^:export stopLoading []
   (reset! @loading-ref false))
-
-(defn ^:export atom-assoc-cid [details cid]           ;; function for adding the icon CID to the details map
-  (swap! details assoc :icon-cid cid))
 
 (defn authenticate [name password loading]
   (reset! loading-ref loading)
