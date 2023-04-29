@@ -24,7 +24,7 @@
 
 ;; automatically scroll the message box to the bottom
 (defn async-scroll [delay]
-  (let [promise (js/Promise. (fn [resolve reject]
+  (let [promise (js/Promise. (fn [resolve]
                                (js/setTimeout #(resolve (.scrollIntoView (.getElementById js/document "bottom"))) delay)))]
     promise))
 

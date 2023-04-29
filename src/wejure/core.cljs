@@ -20,35 +20,55 @@
 
 (def routes
    [["/" {:name ::title
-          :view title-page}]
+          :view title-page
+          :controllers [{:start (fn []                                                            ;; redirect to home page if logged in
+                                  (when (not= nil (js/sessionStorage.getItem "pair"))
+                                    (set! js/window.location.href (reitit-fe/href :wejure.core/home))))}]}]
     ["/test" {:name ::test
               :view test-page}]
     ["/register" {:name ::register
-                  :view registration-page}]
+                  :view registration-page
+                  :controllers [{:start (fn []                                                    ;; redirect to home page if logged in
+                                          (when (not= nil (js/sessionStorage.getItem "pair"))
+                                            (set! js/window.location.href (reitit-fe/href :wejure.core/home))))}]}]
     ["/login" {:name ::login
-               :view login-page}]
+               :view login-page
+               :controllers [{:start (fn []                                                       ;; redirect to home page if logged in
+                                       (when (not= nil (js/sessionStorage.getItem "pair"))
+                                         (set! js/window.location.href (reitit-fe/href :wejure.core/home))))}]}]
     ["/home" {:name ::home
-              :view main-page}]
+              :view main-page
+              :controllers [{:start (fn []                                                        ;; redirect to title page if not logged in
+                                      (when (= nil (js/sessionStorage.getItem "pair"))
+                                               (set! js/window.location.href (reitit-fe/href :wejure.core/title))))}]}]
     ["/search/:search-input" {:name ::search
                               :view search-page
                               :parameters {:path {:search-input string?}}
-                              :controllers [{:parameters {:path [:search-input]}}]}]
+                              :controllers [{:parameters {:path [:search-input]}
+                                             :start (fn []                                        ;; redirect to title page if not logged in
+                                                      (when (= nil (js/sessionStorage.getItem "pair"))
+                                                        (set! js/window.location.href (reitit-fe/href :wejure.core/title))))}]}]
     ["/user/:username" {:name ::user
                         :view profile-page
                         :parameters {:path {:username string?}}
                         :controllers [{:parameters {:path [:username]}
-                                       :start (fn [{:keys [path]}]
-                                                (println "Entering profile of" path))}]}] 
+                                       :start (fn []                                              ;; redirect to title page if not logged in
+                                                (when (= nil (js/sessionStorage.getItem "pair"))
+                                                  (set! js/window.location.href (reitit-fe/href :wejure.core/title))))}]}] 
     ["/chat" {:name ::chat
-              :view chat-page}]])
+              :view chat-page
+              :controllers [{:start (fn []                                                        ;; redirect to title page if not logged in
+                                      (when (= nil (js/sessionStorage.getItem "pair")) 
+                                        (set! js/window.location.href (reitit-fe/href :wejure.core/title))))}]}]])
 
 (defn router-start []
   (reitit-fe/start!
     (reitit-f/router routes {:data {:coercion rss/coercion}})
     (fn [new-match]
       (swap! route-state (fn [old-match]
-                           (when new-match
-                             (assoc new-match :controllers (reitit-fc/apply-controllers (:controllers old-match) new-match))))))
+                           (if new-match
+                             (assoc new-match :controllers (reitit-fc/apply-controllers (:controllers old-match) new-match))    ;; navigate to the page if URL match found
+                             (set! js/window.location.href (reitit-fe/href :wejure.core/title))))))                             ;; navigate to title page if URL match not found
     {:use-fragment false}))
 
 (defn app []

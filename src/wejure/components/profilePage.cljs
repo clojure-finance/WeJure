@@ -9,24 +9,32 @@
 
 (def ipfs-url "https://ipfs.io/ipfs/")               ;; IPFS gateway for retrieving files from IPFS
 
-(def profile-info (r/atom nil))
+(def profile-info (r/atom nil))       ;; stores the information of the profile with respect to current user, item includes :iconCID, :isFollowing
 
-(defn assoc-icon-cid [target-atom value]
-  (swap! target-atom assoc :iconCID value))
+;; function to add key-value pair to the target map, used in profile.js
+(defn ^:export map-assoc [target-atom key value]
+  (swap! target-atom assoc (keyword key) value))
 
-(defn ^:export profile-page [{{:keys [username]} :path-params}]
-  ;;(swap! profile-info assoc :iconCID (profile/getIconCID username))
+(defn profile-page [{{:keys [username]} :path-params}]
   (profile/getIconCID username)
+  (profile/getIsFollowing (js/sessionStorage.getItem "username") username)
   [:div {:style {:margin "0 20% 25px 20%"}}
-    [paper {:id "user-card"
+    [paper {:id "user-card"                                  ;; user banner
             :variant "outlined"
             :sx {:height 200 :mb 2 :display "flex"}}
-     [avatar {:sx {:mx 4 :my 6 :width 100 :height 100}
-              :src (str ipfs-url (get @profile-info :iconCID))}]
-     [box {:sx {:my 6}}
+     [avatar {:sx {:mx 4 :my 6 :width 100 :height 100}       ;; user avatar
+              :src (str ipfs-url (:iconCID @profile-info))}]
+     [box {:sx {:my 6}}                                      ;; username display
       [typography {:sx {:font-size "30px"}}
        username]]
-     [box {:style {:display "flex" :flex-grow 1 :justify-content "flex-end"}}
-      [button {:sx {:mt 16 :mb 4 :mr 4 :width 100 :height 40 :border-radius 30}
-               :variant "outlined"}
-       "Follow"]]]])
+     [box {:style {:display "flex" :flex-grow 1 :justify-content "flex-end"}}         ;; button to follow / unfollow the user
+      (if (= (:isFollowing @profile-info) false)
+        [button {:sx {:mt 16 :mb 4 :mr 4 :width 100 :height 40 :border-radius 30}
+                 :variant "outlined"
+                 :on-click #(profile/followUser (js/sessionStorage.getItem "username") username)}
+         "Follow"]
+        [button {:sx {:mt 16 :mb 4 :mr 4 :width 100 :height 40 :border-radius 30}
+                 :variant "outlined"
+                 :on-click #(profile/unfollowUser (js/sessionStorage.getItem "username") username)}
+         "Unfollow"])
+      ]]])
