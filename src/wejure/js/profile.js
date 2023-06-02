@@ -1,5 +1,6 @@
 import GUN from 'gun';
 import 'gun/sea';
+import 'gun/lib/then';
 
 var gun = GUN({ peers: ['http:localhost:8001/gun'] });              // host configured in relay.js
 var user = gun.user().recall({sessionStorage: true});
@@ -22,9 +23,8 @@ export function searchUser(userSearch) {                                        
 }
 
 export async function getIconCID(username) {                            // get the iconCID from an username and add it to the profile-info atom
-    await gun.get("iconCID").get(username).once((cid) => {
-        wejure.components.profilePage.map_assoc(window.wejure.components.profilePage.profile_info, "iconCID", cid);
-    });
+    let cid = await gun.get("iconCID").get(username).then();
+    return cid;
 }
 
 export function followUser(self, username) {                            // follow username account with the self account

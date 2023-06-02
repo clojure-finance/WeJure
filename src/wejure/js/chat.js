@@ -1,5 +1,7 @@
 import GUN from 'gun';
 import 'gun/sea';
+import 'gun/lib/then';
+import 'gun/lib/promise';
 
 var gun = GUN({ peers: ['http:localhost:8001/gun'] });                          // host configured in relay.js
 var user = gun.user().recall({sessionStorage: true});
@@ -59,3 +61,28 @@ export async function displayMessage(peer) {                                    
     });      
 }
 
+/*
+export async function displayMessage(peer) {                                                            // display the messages when a peer is selected
+    let selfPair = JSON.parse(sessionStorage.getItem('pair'));                                          // get the key pair of the user
+    let peerPub = "";
+    let peerEPub = "";
+    await gun.get('~@'+peer).once((data, key) => {                                                      // get the public key of the peer
+        peerPub = Object.keys(data)[1].slice(1);      
+    });
+    await gun.get('~'+peerPub).get('epub').once((data, key) => {                                        // get the encryption public key of the peer
+        peerEPub = data;     
+    });
+    let passphrase = await SEA.secret(peerEPub, selfPair);                                                            // get the decryption key
+    await gun.get('chat').get(selfPair.pub).get(peerPub).map().once(async (data, key) => {                            // scan through the stored messages
+        let decryptedMessage = await SEA.decrypt(data, passphrase);                                                   // decrypt the message
+        wejure.components.chatPage.add_message(window.wejure.components.chatPage.message_list, decryptedMessage);     // add the message for screen output
+        console.log("before");
+    }).then((resolved) => {
+        if (resolved) {
+            console.log("after");
+        }  
+    });
+    console.log("after 2");      
+    console.log(getIconCID("ben").then((resolved) => {console.log(resolved)}));
+}
+*/

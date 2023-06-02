@@ -16,7 +16,8 @@
   (swap! target-atom assoc (keyword key) value))
 
 (defn profile-page [{{:keys [username]} :path-params}]
-  (profile/getIconCID username)
+  (.then (js/Promise.resolve (profile/getIconCID username))
+         #(swap! profile-info assoc :iconCID %))
   (profile/getIsFollowing (js/sessionStorage.getItem "username") username)
   [:div {:style {:margin "0 20% 25px 20%"}}
     [paper {:id "user-card"                                  ;; user banner

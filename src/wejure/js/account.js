@@ -30,6 +30,7 @@ export function register(name, password, cid) {                     // function 
         else {
         gun.get("users").set(name);                                 // add the username into the user list in gunDB
             gun.get("iconCID").get(name).put(cid);                  // store the IPFS CID of the user into gunDB
+            gun.get("following").get(name).get(name).put(true);
             alert("Account created successfully");
             wejure.components.registrationPage.stopLoading();
             wejure.components.registrationPage.toLoginPage();       // redirect to the login page

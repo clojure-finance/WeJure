@@ -60,10 +60,12 @@
    {:position "static"
     :sx {:background-color "#070707"}}
    [toolbar
-    [:img
-     {:src "http://localhost:8020/logo_white.png"
-      :style {:height "50px"
-              :margin "0 20px 0 0"}}]
+    [:a.navbar-item
+     {:href (reitit-fe/href :wejure.core/home)}
+     [:img
+      {:src "http://localhost:8020/logo_white.png"
+       :style {:height "50px"
+               :margin "3px 20px 0 0"}}]]
     [:div
      {:style {:flex-grow "1"}}]
     [:div
@@ -105,10 +107,12 @@
    {:position "static"
     :sx {:background-color "#070707"}}
    [toolbar
-    [:img
-     {:src "http://localhost:8020/logo_white.png"
-      :style {:height "50px"
-              :margin "0 20px 0 0"}}]
+    [:a.navbar-item
+     {:href (reitit-fe/href :wejure.core/home)}
+     [:img
+      {:src "http://localhost:8020/logo_white.png"
+       :style {:height "50px"
+               :margin "3px 20px 0 0"}}]]
     [:div
      {:style {:flex-grow "1"}}]
     [:div
@@ -151,10 +155,12 @@
    {:position "static"
     :sx {:background-color "#070707"}}
    [toolbar
-    [:img
-     {:src "http://localhost:8020/logo_white.png"
-      :style {:height "50px"
-              :margin "0 20px 0 0"}}]
+    [:a.navbar-item
+     {:href (reitit-fe/href :wejure.core/home)}
+     [:img
+      {:src "http://localhost:8020/logo_white.png"
+       :style {:height "50px"
+               :margin "3px 20px 0 0"}}]]
     [:div
      {:style {:flex-grow "1"}}]
   
