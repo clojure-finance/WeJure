@@ -81,15 +81,18 @@
                   :on-change (fn [event]
                                (reset! search-input (-> event .-target .-value)))
                   :on-key-down (fn [event]
-                                 (when (= (.-keyCode event) 13)
+                                 (when (= (.-keyCode event) 13)                            ;; navigate to search result page when Enter is pressed
                                    (set! js/window.location.href (reitit-fe/href :wejure.core/search {:search-input @search-input}))))}]
      [typography
       {:variant "h6"
        :component "div"
        :sx {:font-size "12px" :margin "0 20px 0 0"}}
       (js/sessionStorage.getItem "username")]
-     [avatar {:sx {:width 50 :height 50}
-              :src (str ipfs-url (js/sessionStorage.getItem "iconCID"))}]     ;; retrieve the user icon image from IPFS
+     [:a.navbar-item
+      {:href (reitit-fe/href :wejure.core/user {:username (js/sessionStorage.getItem "username")})}
+      [avatar {:sx {:width 50 :height 50}
+               :src (str ipfs-url (js/sessionStorage.getItem "iconCID"))}]]     ;; retrieve the user icon image from IPFS
+
      [button
       {:color "inherit"
        :variant "outlined"
@@ -128,16 +131,17 @@
                   :on-change (fn [event]
                                (reset! search-input (-> event .-target .-value)))
                   :on-key-down (fn [event]
-                                 (when (= (.-keyCode event) 13)
-                                   (js/sessionStorage.setItem "lastSearched" @search-input)
+                                 (when (= (.-keyCode event) 13)                                       ;; navigate to search result page when Enter is pressed
                                    (set! js/window.location.href (reitit-fe/href :wejure.core/search {:search-input @search-input}))))}]
      [typography
       {:variant "h6"
        :component "div"
        :sx {:font-size "12px" :margin "0 20px 0 0"}}
       (js/sessionStorage.getItem "username")]
-     [avatar {:sx {:width 50 :height 50}
-              :src (str ipfs-url (js/sessionStorage.getItem "iconCID"))}]     ;; retrieve the user icon image from IPFS
+     [:a.navbar-item
+      {:href (reitit-fe/href :wejure.core/user {:username (js/sessionStorage.getItem "username")})}
+      [avatar {:sx {:width 50 :height 50}
+               :src (str ipfs-url (js/sessionStorage.getItem "iconCID"))}]]     ;; retrieve the user icon image from IPFS
      [button
       {:color "inherit"
        :variant "outlined"
@@ -178,8 +182,7 @@
                   :on-change (fn [event]
                                (reset! search-input (-> event .-target .-value)))
                   :on-key-down (fn [event]
-                                 (when (= (.-keyCode event) 13)
-                                   (js/sessionStorage.setItem "lastSearched" @search-input)
+                                 (when (= (.-keyCode event) 13)                                            ;; navigate to search result page when Enter is pressed
                                    (set! js/window.location.href (reitit-fe/href :wejure.core/search {:search-input @search-input}))))}]
      [typography
       {:variant "h6"
@@ -187,8 +190,10 @@
        :sx {:font-size "12px" :margin "0 20px 0 0"}}
       (js/sessionStorage.getItem "username")]
 
-     [avatar {:sx {:width 50 :height 50}
-              :src (str ipfs-url (js/sessionStorage.getItem "iconCID"))}]     ;; retrieve the user icon image from IPFS
+     [:a.navbar-item
+      {:href (reitit-fe/href :wejure.core/user {:username (js/sessionStorage.getItem "username")})}
+      [avatar {:sx {:width 50 :height 50}
+               :src (str ipfs-url (js/sessionStorage.getItem "iconCID"))}]]     ;; retrieve the user icon image from IPFS
 
      [button
       {:color "inherit"
