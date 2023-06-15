@@ -27,6 +27,11 @@ export async function getIconCID(username) {                            // get t
     return cid;
 }
 
+export async function getUserBio(username) {                            // get the userBio from an username and add it to the profile-info atom
+    let bio = await gun.get("userBio").get(username).then();
+    return bio;
+}
+
 export function followUser(self, username) {                            // follow username account with the self account
     gun.get("following").get(self).get(username).put(true);
     getIsFollowing(self, username);                                     // update the profile-info atom and refresh the page
@@ -48,4 +53,8 @@ export function getIsFollowing(self, username) {                                
     if (followed == false) {
         wejure.components.profilePage.map_assoc(window.wejure.components.profilePage.profile_info, "isFollowing", false);
     }  
+}
+
+export async function updateBio(user, bio) {
+    await gun.get("userBio").get(user).put(bio);
 }

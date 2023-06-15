@@ -1,19 +1,20 @@
 (ns wejure.components.mainPage
-  (:require clojure.walk
-            [reagent.core :as r]
-            [reagent-mui.material.box :refer [box]]
-            [reagent-mui.material.paper :refer [paper]]
-            [reagent-mui.material.button :refer [button]]
-            [reagent-mui.material.avatar :refer [avatar]]
-            [reagent-mui.material.typography :refer [typography]]
-            [reagent-mui.material.text-field :refer [text-field]]
-            [reagent-mui.material.circular-progress :refer [circular-progress]]
-            [reagent-mui.material.icon-button :refer [icon-button]]
-            [reagent-mui.icons.add-a-photo-sharp :refer [add-a-photo-sharp]]
+  (:require ["../js/guncljs" :as gun]
+            ["../js/profile" :as profile]
             [cljs-ipfs-api.core :as icore :refer [init-ipfs]]
             [cljs-ipfs-api.files :as ifiles]
-            ["../js/guncljs" :as gun]
-            ["../js/profile" :as profile]))
+            clojure.walk
+            [reagent-mui.icons.add-a-photo-sharp :refer [add-a-photo-sharp]]
+            [reagent-mui.material.avatar :refer [avatar]]
+            [reagent-mui.material.box :refer [box]]
+            [reagent-mui.material.button :refer [button]]
+            [reagent-mui.material.circular-progress :refer [circular-progress]]
+            [reagent-mui.material.icon-button :refer [icon-button]]
+            [reagent-mui.material.paper :refer [paper]]
+            [reagent-mui.material.text-field :refer [text-field]]
+            [reagent-mui.material.typography :refer [typography]]
+            [reagent.core :as r]
+            [reitit.frontend.easy :as reitit-fe]))
 
 ;;(def ipfs-url "https://ipfs.io/ipfs/")
 (def ipfs-url "http://localhost:8080/ipfs/") //the default port of local ipfs app
@@ -91,8 +92,7 @@
                :border "3px solid grey"}}
          [:div
           [text-field                                                              ;; text field for text content of the new post
-           {:sx {:full-width true}
-            :multiline true
+           {:multiline true
             :full-width true
             :max-rows 10
             :placeholder "What's on your mind?"
@@ -140,12 +140,14 @@
                                    :box-shadow 3}
                               :justify-content "space-between"}
                          [box {:sx {:my 1 :display "flex"}}
-                          [avatar {:sx {:mx 2 :my 1 :width 36 :height 36}                                  ;; user avatar
-                                   :src (str ipfs-url (:iconCID post))}]
-                          [typography {:sx {:my 1 :font-size "20px"}}                                      ;; username
-                           (:username post)]]
-                         [typography {:sx {:mx 1 :my 3 :font-size "10px"}}                                 ;; post timestamp
-                          (.toLocaleString (new js/Date. (:timestamp post)))]]
+                          [:a
+                           {:href (reitit-fe/href :wejure.core/user {:username (:username post)})}
+                           [avatar {:sx {:mx 2 :my 1 :width 36 :height 36}                                  ;; user avatar with the link to their profile pages
+                                    :src (str ipfs-url (:iconCID post))}]]
+                           [typography {:sx {:my 1 :font-size "20px"}}                                      ;; username
+                            (:username post)]]
+                          [typography {:sx {:mx 1 :my 3 :font-size "10px"}}                                 ;; post timestamp
+                           (.toLocaleString (new js/Date. (:timestamp post)))]]
 
                         (when (not= (:text post) nil)                                                      ;; post text
                           [typography {:sx {:mx 2 :my 2 :font-size "16px" :white-space "break-spaces"}}
