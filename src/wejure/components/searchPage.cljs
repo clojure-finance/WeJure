@@ -10,7 +10,8 @@
 
 (def result-list (r/atom []))
 
-(def ipfs-url "https://ipfs.io/ipfs/")
+;;def ipfs-url "https://ipfs.io/ipfs/")
+(def ipfs-url "http://localhost:8080/ipfs/") //the default port of local ipfs app
 
 ;; function to append element to the target vector, used in profile.js
 (defn ^:export vector-append [target-atom value]             
