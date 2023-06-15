@@ -17,7 +17,7 @@
             [reitit.frontend.easy :as reitit-fe]))
 
 ;;(def ipfs-url "https://ipfs.io/ipfs/")
-(def ipfs-url "http://localhost:8080/ipfs/") //the default port of local ipfs app
+(def ipfs-url "http://localhost:8080/ipfs/") ;;the default port of local ipfs app
 
 (def post-list (r/atom {}))
 
