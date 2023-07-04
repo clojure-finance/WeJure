@@ -16,7 +16,8 @@
             [reagent-mui.material.dialog-actions :refer [dialog-actions]]
             [reagent.core :as r]))
 
-(def ipfs-url "https://ipfs.io/ipfs/")           ;; IPFS gateway for retrieving files from IPFS
+;;(def ipfs-url "https://ipfs.io/ipfs/")               ;; IPFS gateway for retrieving files from IPFS
+(def ipfs-url "http://localhost:8080/ipfs/") ;;the default port of local ipfs app
 
 (def profile-info (r/atom nil))                  ;; stores the information of the profile with respect to current user, item includes :icon_cid, :bio, :is_following
 

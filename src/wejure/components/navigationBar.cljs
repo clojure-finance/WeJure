@@ -9,7 +9,8 @@
             [reagent-mui.material.avatar :refer [avatar]]
             ["../js/account" :as acc]))
 
-(def ipfs-url "https://ipfs.io/ipfs/")               ;; IPFS gateway for retrieving files from IPFS
+;;(def ipfs-url "https://ipfs.io/ipfs/")               ;; IPFS gateway for retrieving files from IPFS
+(def ipfs-url "http://localhost:8080/ipfs/") ;;the default port of local ipfs app
 
 (defn logoutFunction []
   (acc/logout)
