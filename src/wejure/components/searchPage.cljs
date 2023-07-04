@@ -36,7 +36,7 @@
       ^{:key result} 
       [box {:sx {:display "flex" :box-shadow 1}}
        [avatar {:sx {:mx 4 :my 2 :width 48 :height 48}                            ;; user avatar
-                :src (str ipfs-url (get result :iconCID))}]
+                :src (str ipfs-url (get result :icon_cid))}]
        [typography {:sx {:mx 2 :my 3 :font-size "20px"}}                          ;; username
         (get result :username)]
        [box {:style {:display "flex" :flex-grow 1 :justify-content "flex-end"}}   ;; button for redirecting to the user profile

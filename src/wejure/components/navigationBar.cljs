@@ -91,7 +91,7 @@
      [:a.navbar-item
       {:href (reitit-fe/href :wejure.core/user {:username (js/sessionStorage.getItem "username")})}
       [avatar {:sx {:width 50 :height 50}
-               :src (str ipfs-url (js/sessionStorage.getItem "iconCID"))}]]     ;; retrieve the user icon image from IPFS
+               :src (str ipfs-url (js/sessionStorage.getItem "icon_cid"))}]]     ;; retrieve the user icon image from IPFS
 
      [button
       {:color "inherit"
@@ -141,7 +141,7 @@
      [:a.navbar-item
       {:href (reitit-fe/href :wejure.core/user {:username (js/sessionStorage.getItem "username")})}
       [avatar {:sx {:width 50 :height 50}
-               :src (str ipfs-url (js/sessionStorage.getItem "iconCID"))}]]     ;; retrieve the user icon image from IPFS
+               :src (str ipfs-url (js/sessionStorage.getItem "icon_cid"))}]]     ;; retrieve the user icon image from IPFS
      [button
       {:color "inherit"
        :variant "outlined"
@@ -193,7 +193,7 @@
      [:a.navbar-item
       {:href (reitit-fe/href :wejure.core/user {:username (js/sessionStorage.getItem "username")})}
       [avatar {:sx {:width 50 :height 50}
-               :src (str ipfs-url (js/sessionStorage.getItem "iconCID"))}]]     ;; retrieve the user icon image from IPFS
+               :src (str ipfs-url (js/sessionStorage.getItem "icon_cid"))}]]     ;; retrieve the user icon image from IPFS
 
      [button
       {:color "inherit"

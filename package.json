@@ -9,6 +9,7 @@
     "@emotion/styled": "^11.0.0",
     "@mui/material": "5.2.4",
     "create-react-class": "^15.6.3",
+    "crypto-js": "^4.1.1",
     "express": "^4.18.2",
     "gun": "^0.2020.1239",
     "ipfs-core": "^0.18.0",

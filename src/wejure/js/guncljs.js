@@ -1,7 +1,7 @@
 import GUN from 'gun';
 import 'gun/sea';
 
-var gun = GUN({ peers: ['http:localhost:8001/gun'] });          // host configured in relay.js
+var gun = GUN({ peers: ['http://localhost:8001/gun'] });          // host configured in relay.js
 var user = gun.user().recall({sessionStorage: true});
 
 export function put() {                                         // n parameters (index from 0 to n-1)

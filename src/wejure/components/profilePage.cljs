@@ -13,15 +13,12 @@
             [reagent-mui.material.dialog-content :refer [dialog-content]]
             [reagent-mui.material.icon-button :refer [icon-button]]
             [reagent-mui.icons.close :refer [close]]
-            [reagent-mui.material.dialog-content-text :refer [dialog-content-text]]
             [reagent-mui.material.dialog-actions :refer [dialog-actions]]
-            [cljs.core.async :refer [go]]
-            [cljs.core.async.interop :refer-macros [<p!]]
             [reagent.core :as r]))
 
-(def ipfs-url "https://ipfs.io/ipfs/")               ;; IPFS gateway for retrieving files from IPFS
+(def ipfs-url "https://ipfs.io/ipfs/")           ;; IPFS gateway for retrieving files from IPFS
 
-(def profile-info (r/atom nil))       ;; stores the information of the profile with respect to current user, item includes :iconCID, :bio, :isFollowing
+(def profile-info (r/atom nil))                  ;; stores the information of the profile with respect to current user, item includes :icon_cid, :bio, :is_following
 
 (def post-list (r/atom nil))
 
@@ -36,7 +33,7 @@
                                   (let [post-with-icon-cid (atom (clojure.walk/keywordize-keys (into {} (rest (js->clj post)))))]   ;; first post for the timekey, take only essential info
                                     (.then (js/Promise.resolve (profile/getIconCID (:username @post-with-icon-cid)))                ;; retrieving the iconCID of the post owner
                                            (fn [resolve]
-                                             (swap! post-with-icon-cid assoc :iconCID resolve)                                      ;; adding the iconCID of post owner
+                                             (swap! post-with-icon-cid assoc :icon_cid resolve)                                     ;; adding the iconCID of post owner
                                              (swap! post-list assoc (keyword time-key) @post-with-icon-cid))))                      ;; adding the post to post-list
                                   ;; case for more than one post for a particular timekey:
                                   (swap! post-list assoc (keyword time-key) (conj ((keyword time-key) @post-list) (clojure.walk/keywordize-keys (into {} (rest (js->clj post)))))))))))
@@ -55,7 +52,7 @@
       (when (not= post-list-user username)
         (reset! post-list nil))))
   (.then (js/Promise.resolve (profile/getIconCID username))
-         #(swap! profile-info assoc :iconCID %))
+         #(swap! profile-info assoc :icon_cid %))
   (.then (js/Promise.resolve (profile/getUserBio username))
          (fn [bio]
            (if (= bio nil)
@@ -71,7 +68,7 @@
             :variant "outlined"
             :sx {:min-height 200 :height "auto" :width 850 :mb 2 :display "flex"}}
      [avatar {:sx {:mx 4 :my 6 :width 100 :height 100}                  ;; user avatar
-              :src (str ipfs-url (:iconCID @profile-info))}]
+              :src (str ipfs-url (:icon_cid @profile-info))}]
      [box {:sx {:my 6 :width 450}}                                      ;; username display
       [typography {:sx {:font-size "30px"}}
        username]
@@ -85,7 +82,7 @@
                              (reset! bio-input (:bio @profile-info))
                              (reset! form-open true))}
          "Edit Profile"]
-        (if (= (:isFollowing @profile-info) false)                                                   ;; button to follow / unfollow the user
+        (if (= (:is_following @profile-info) false)                                                   ;; button to follow / unfollow the user
           [button {:sx {:mt 16 :mb 4 :mr 4 :width 100 :height 40 :border-radius 30}
                    :variant "contained"
                    :on-click #(profile/followUser (js/sessionStorage.getItem "username") username)}
@@ -103,7 +100,7 @@
                           :justify-content "space-between"}
                      [box {:sx {:my 1 :display "flex"}}
                       [avatar {:sx {:mx 2 :my 1 :width 36 :height 36}                                  ;; user avatar
-                               :src (str ipfs-url (:iconCID post))}]
+                               :src (str ipfs-url (:icon_cid post))}]
                       [typography {:sx {:my 1 :font-size "20px"}}                                      ;; username
                        (:username post)]]
                      [typography {:sx {:mx 1 :my 3 :font-size "10px"}}                                 ;; post timestamp

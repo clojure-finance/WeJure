@@ -12,14 +12,21 @@
             [cljs-ipfs-api.core :as icore :refer [init-ipfs]]
             [cljs-ipfs-api.files :as ifiles]))
 
-(defn emptyField [field]
-    (= (count @field) 0))
+(defn input-length-at-least [field min]                                    ;; check if the length of the input is at least min
+    (>= (count @field) min))
 
 (defn emptyPhoto [photo]
   (nil? @photo))
 
-(defn is-pwd-matched [password pwdConfirm]
-  (= @password @pwdConfirm))
+(defn is-pwd-matched [pwd pwd-confirm]
+  (= @pwd @pwd-confirm))
+
+(defn check-username-valid [username]
+  (let [valid (atom true)]
+    (doseq [chr @username]
+      (when (= (re-seq #"\w" chr) nil)
+        (reset! valid false)))
+    @valid))
 
 (def loading-ref (atom ""))
 
@@ -41,7 +48,7 @@
                       (acc/register @name @password cid)))))))             ;; register the user account and store the CID in gunDB
 
 (defn registration-page []
-  (let [name (r/atom nil) password (r/atom nil) pwdConfirm (r/atom nil) profilePic (r/atom nil) loading (r/atom false)]
+  (let [name (r/atom nil) password (r/atom nil) password-confirm (r/atom nil) profile-pic (r/atom nil) loading (r/atom false)]
     (init-ipfs {:host "	http://127.0.0.1:5001"})                           ;; initialize IPFS with localhost (need to run a IPFS client locally)
     (fn []
       [:div
@@ -69,13 +76,18 @@
           {:variant "h6"
            :component "div"}
           "1. Create a username"]
+         
+         [typography
+          {:font-size 8
+           :color "grey"}
+          "Only allow alphabets, numbers and underscore(_)"]
 
          [text-field
           {:variant "filled"
            :value @name
            :on-change (fn [e] (reset! name (.. e -target -value)))
-           :error (emptyField name)
-           :helper-text (if (emptyField name) "no text entered (20 characters max)" " ")
+           :error (or (not (input-length-at-least name 3)) (not (check-username-valid name)))
+           :helper-text (if (or (not (input-length-at-least name 3)) (not (check-username-valid name))) "Must contain 3-20 characters and no special characters" " ")
            :input-props {:max-length 20}}]]
 
         [:div
@@ -85,15 +97,15 @@
          [typography
           {:variant "h6"
            :component "div"}
-          "2. Create a password (at least 8 digits)"]
+          "2. Create a password"]
 
          [text-field
           {:variant "filled"
            :type "password"
            :value @password
            :on-change (fn [e] (reset! password (.. e -target -value)))
-           :error (emptyField password)
-           :helper-text (if (emptyField password) "no text entered (20 characters max)" " ")
+           :error (not (input-length-at-least password 8))
+           :helper-text (if (not (input-length-at-least password 8)) "Must contain 8-20 characters" " ")
            :input-props {:max-length 20}}]]
 
         [:div
@@ -108,10 +120,10 @@
          [text-field
           {:variant "filled"
            :type "password"
-           :value @pwdConfirm
-           :on-change (fn [e] (reset! pwdConfirm (.. e -target -value)))
-           :error (emptyField pwdConfirm)
-           :helper-text (if (emptyField pwdConfirm) "no text entered (20 characters max)" (if (is-pwd-matched password pwdConfirm) " " "Passwords do not match"))
+           :value @password-confirm
+           :on-change (fn [e] (reset! password-confirm (.. e -target -value)))
+           :error (not (is-pwd-matched password password-confirm))
+           :helper-text (if (not (is-pwd-matched password password-confirm)) "Passwords do not match" " ")
            :input-props {:max-length 20}}]]
 
         [:div
@@ -130,7 +142,7 @@
             :id "upload-image"
             :type "file"
             :style {:display "none"}
-            :on-change #(let [uploaded (-> % .-target .-files (aget 0))] (reset! profilePic uploaded))}]
+            :on-change #(let [uploaded (-> % .-target .-files (aget 0))] (reset! profile-pic uploaded))}]
           [icon-button
            {:component "span"}
            [add-a-photo-sharp]]]
@@ -138,11 +150,11 @@
          [typography
           {:variant "h6"
            :component "div"
-           :sx {:color (if (emptyPhoto profilePic)  "#d32f2f" "#070707")
+           :sx {:color (if (emptyPhoto profile-pic)  "#d32f2f" "#070707")
                 :font-size "12px"
                 :font-weight "500"
                 :text-align "center"}}
-          (if (emptyPhoto profilePic) "no photo uploaded" (.-name @profilePic))]]
+          (if (emptyPhoto profile-pic) "no photo uploaded" (.-name @profile-pic))]]
 
         [:div
          {:style {:display "flex"
@@ -151,7 +163,7 @@
          [button
           {:variant "contained"
            :disable-elevation true
-           :disabled (or (emptyField name) (emptyField password) (emptyPhoto profilePic) (not (is-pwd-matched password pwdConfirm)) @loading)
-           :on-click #(submitProfile name password profilePic loading)}
+           :disabled (or (not (input-length-at-least name 3)) (not (input-length-at-least password 8)) (emptyPhoto profile-pic) (not (is-pwd-matched password password-confirm)) (not (check-username-valid name)) @loading)
+           :on-click #(submitProfile name password profile-pic loading)}
           "Submit"]
          [circular-progress {:sx {:margin "10px" :visibility (when (not @loading) "hidden")}}]]]])))

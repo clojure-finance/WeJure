@@ -1,10 +1,10 @@
 import GUN from 'gun';
 import 'gun/sea';
 
-var gun = GUN({ peers: ['http:localhost:8001/gun'] });        // host configured in relay.js
+var gun = GUN({ peers: ['http://localhost:8001/gun'] });            // host configured in relay.js
 var user = gun.user().recall({sessionStorage: true});
 
-export function login(name, password) {                       // function for logging in
+export function login(name, password) {                             // function for logging in
     user.auth(name, password, ({ err }) => {
         if (err) {
             wejure.components.loginPage.stopLoading();
@@ -12,8 +12,8 @@ export function login(name, password) {                       // function for lo
         } 
         else {
             sessionStorage.setItem("username", name);
-            gun.get("iconCID").get(name).once((data) => {
-                sessionStorage.setItem("iconCID", data);
+            gun.get("user").get(name).get("icon_cid").once((data) => {
+                sessionStorage.setItem("icon_cid", data);
             });
             wejure.components.loginPage.stopLoading();
             wejure.components.loginPage.toMainPage();               // redirect to the main page
@@ -28,12 +28,12 @@ export function register(name, password, cid) {                     // function 
             alert(err);
         } 
         else {
-        gun.get("users").set(name);                                 // add the username into the user list in gunDB
-            gun.get("iconCID").get(name).put(cid);                  // store the IPFS CID of the user into gunDB
-            gun.get("following").get(name).get(name).put(true);
+            userInfo = {"icon_cid": cid, "bio": "", "is_following": {}};            // user info object, to be stored in gunDB
+            gun.get("user").get(name).put(userInfo);
+            gun.get("user").get(name).get("is_following").get(name).put(true);
             alert("Account created successfully");
             wejure.components.registrationPage.stopLoading();
-            wejure.components.registrationPage.toLoginPage();       // redirect to the login page
+            wejure.components.registrationPage.toLoginPage();                       // redirect to the login page
         }
     });
 }    

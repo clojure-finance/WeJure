@@ -39,9 +39,9 @@
                                                 (when (not= post nil)
                                                   (if (= nil ((keyword time-key) @post-list))
                                                     (let [post-with-icon-cid (atom (clojure.walk/keywordize-keys (into {} (rest (js->clj post)))))]   ;; first post for the timekey, take only essential info
-                                                      (.then (js/Promise.resolve (profile/getIconCID (:username @post-with-icon-cid)))                ;; retrieving the iconCID of the post owner
+                                                      (.then (js/Promise.resolve (profile/getIconCID (:username @post-with-icon-cid)))                ;; retrieving the icon_cid of the post owner
                                                              (fn [resolve]
-                                                               (swap! post-with-icon-cid assoc :iconCID resolve)                                      ;; adding the iconCID of post owner
+                                                               (swap! post-with-icon-cid assoc :icon_cid resolve)                                     ;; adding the icon_cid of post owner
                                                                (swap! post-list assoc (keyword time-key) @post-with-icon-cid))))                      ;; adding the post to post-list
                                                     ;; case for more than one post for a particular timekey:
                                                     (swap! post-list assoc (keyword time-key) (conj ((keyword time-key) @post-list) (clojure.walk/keywordize-keys (into {} (rest (js->clj post))))))))))))))
@@ -142,7 +142,7 @@
                           [:a
                            {:href (reitit-fe/href :wejure.core/user {:username (:username post)})}
                            [avatar {:sx {:mx 2 :my 1 :width 36 :height 36}                                  ;; user avatar with the link to their profile pages
-                                    :src (str ipfs-url (:iconCID post))}]]
+                                    :src (str ipfs-url (:icon_cid post))}]]
                            [typography {:sx {:my 1 :font-size "20px"}}                                      ;; username
                             (:username post)]]
                           [typography {:sx {:mx 1 :my 3 :font-size "10px"}}                                 ;; post timestamp

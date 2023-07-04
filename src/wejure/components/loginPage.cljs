@@ -8,8 +8,9 @@
             [reagent-mui.material.typography :refer [typography]]
             [reagent.core :as r]))
 
-(defn emptyField [field]
-    (= (count @field) 0))
+(defn input-length-at-least [field min]                                    ;; check if the length of the input is at least min
+  (>= (count @field) min))
+
 
 (def loading-ref (atom ""))
 
@@ -57,8 +58,8 @@
         {:variant "filled"
          :value @name
          :on-change (fn [e] (reset! name (.. e -target -value)))
-         :error (emptyField name)
-         :helper-text (if (emptyField name) "no text entered (20 characters max)" " ")
+         :error (not (input-length-at-least name 3))
+         :helper-text (if (not (input-length-at-least name 3)) "Must contain 3-20 characters" " ")
          :input-props {:max-length 20}}]]
 
       [:div
@@ -75,8 +76,8 @@
          :type "password"
          :value @password
          :on-change (fn [e] (reset! password (.. e -target -value)))
-         :error (emptyField password)
-         :helper-text (if (emptyField password) "no text entered (20 characters max)" " ")
+         :error (not (input-length-at-least password 8))
+         :helper-text (if (not (input-length-at-least password 8)) "Must contain 8-20 characters" " ")
          :input-props {:max-length 20}}]]
 
       [:div
@@ -86,7 +87,7 @@
        [button
         {:variant "contained"
          :disable-elevation true
-         :disabled (or (emptyField name) (emptyField password) @loading)
+         :disabled (or (not (input-length-at-least name 3)) (not (input-length-at-least password 8)) @loading)
          :on-click #(authenticate name password loading)}
         "Submit"]
        [circular-progress {:sx {:margin "10px" :visibility (when (not @loading) "hidden")}}]]]])))
