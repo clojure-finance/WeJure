@@ -28,14 +28,15 @@
 ;; function for storing the post made by the user in gunDB 
 (defn store-post [username text image-cid]
   (let [timestamp (.toUTCString (new js/Date.)) timekey (js/Date.now) post (atom {:username username, :timestamp timestamp, :text text, :image image-cid})]
-    (gun/put "following" username username true)
+    (gun/put "user" username "is_following" username true)
     (gun/put "post" username timekey (clj->js @post))))
 
 ;; function for retrieving the posts made by the accounts that the user follows, called when the home page is loaded
 (defn load-post []
-  (gun/map-once "following" (js/sessionStorage.getItem "username")
-                (fn [following user]                                      ;; for each account that the user is following, retrieve the posts 
-                  (when (= following true)
+  (gun/map-once "user" (js/sessionStorage.getItem "username") "is_following"
+                (fn [is-following user]                                      ;; for each account that the user is following, retrieve the posts 
+                  (when (= is-following true)
+                    (println user)
                     (gun/map-once "post" user (fn [post time-key]
                                                 (when (not= post nil)
                                                   (if (= nil ((keyword time-key) @post-list))

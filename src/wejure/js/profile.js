@@ -9,7 +9,7 @@ export function searchUser(userSearch) {                                        
     let resultList = window.wejure.components.searchPage.result_list;               // store the results
     gun.get("user").map().once((userInfo, user) => {
         if (user.includes(userSearch)) {
-            gun.get("user").get(userSearch).get("icon_cid").once((cid) => {                                // retrieve username and iconCID if a match is found
+            gun.get("user").get(user).get("icon_cid").once((cid) => {                                // retrieve username and iconCID if a match is found
                 let result = {"username": user, "icon_cid": cid};    
                 if (user == userSearch) {
                     wejure.components.searchPage.vector_prepend(resultList, result);    // add the result on top of the page if it is an exact match    

@@ -9,8 +9,8 @@ var user = gun.user().recall({sessionStorage: true});
 
 export function init(username) {                                                // initialize the chat room: add all the users into the select box
     let recipientList = window.wejure.components.chatPage.recipient_list;
-    gun.get("user").map().once((userInfo, user) => {
-        if (user != username) {
+    gun.get("user").get(username).get("is_following").map().once((is_following, user) => {
+        if (is_following == true && user != username) {
             wejure.components.chatPage.atom_conj(recipientList, user); 
         }
     });

@@ -10,7 +10,7 @@
             ["../js/account" :as acc]))
 
 ;;(def ipfs-url "https://ipfs.io/ipfs/")               ;; IPFS gateway for retrieving files from IPFS
-(def ipfs-url "http://localhost:8080/ipfs/") ;;the default port of local ipfs app
+(def ipfs-url "http://localhost:8080/ipfs/")           ;; The default port of local ipfs app
 
 (defn logoutFunction []
   (acc/logout)
@@ -82,7 +82,7 @@
                   :on-change (fn [event]
                                (reset! search-input (-> event .-target .-value)))
                   :on-key-down (fn [event]
-                                 (when (= (.-keyCode event) 13)                            ;; navigate to search result page when Enter is pressed
+                                 (when (and (not= @search-input "") (= (.-keyCode event) 13))                  ;; navigate to search result page when Enter is pressed
                                    (set! js/window.location.href (reitit-fe/href :wejure.core/search {:search-input @search-input}))))}]
      [typography
       {:variant "h6"
@@ -132,7 +132,7 @@
                   :on-change (fn [event]
                                (reset! search-input (-> event .-target .-value)))
                   :on-key-down (fn [event]
-                                 (when (= (.-keyCode event) 13)                                       ;; navigate to search result page when Enter is pressed
+                                 (when (and (not= @search-input "") (= (.-keyCode event) 13))             ;; navigate to search result page when Enter is pressed
                                    (set! js/window.location.href (reitit-fe/href :wejure.core/search {:search-input @search-input}))))}]
      [typography
       {:variant "h6"
@@ -183,7 +183,7 @@
                   :on-change (fn [event]
                                (reset! search-input (-> event .-target .-value)))
                   :on-key-down (fn [event]
-                                 (when (= (.-keyCode event) 13)                                            ;; navigate to search result page when Enter is pressed
+                                 (when (and (not= @search-input "") (= (.-keyCode event) 13))                         ;; navigate to search result page when Enter is pressed
                                    (set! js/window.location.href (reitit-fe/href :wejure.core/search {:search-input @search-input}))))}]
      [typography
       {:variant "h6"

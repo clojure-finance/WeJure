@@ -28,9 +28,8 @@ export function register(name, password, cid) {                     // function 
             alert(err);
         } 
         else {
-            userInfo = {"icon_cid": cid, "bio": "", "is_following": {}};            // user info object, to be stored in gunDB
+            userInfo = {"icon_cid": cid, "bio": "", "is_following": {[name]: true}};            // user info object, to be stored in gunDB
             gun.get("user").get(name).put(userInfo);
-            gun.get("user").get(name).get("is_following").get(name).put(true);
             alert("Account created successfully");
             wejure.components.registrationPage.stopLoading();
             wejure.components.registrationPage.toLoginPage();                       // redirect to the login page
