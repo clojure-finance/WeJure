@@ -36,7 +36,6 @@
   (gun/map-once "user" (js/sessionStorage.getItem "username") "is_following"
                 (fn [is-following user]                                      ;; for each account that the user is following, retrieve the posts 
                   (when (= is-following true)
-                    (println user)
                     (gun/map-once "post" user (fn [post time-key]
                                                 (when (not= post nil)
                                                   (if (= nil ((keyword time-key) @post-list))

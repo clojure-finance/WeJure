@@ -61,7 +61,9 @@
               :display "flex"
               :flex-direction "column"
               :justify-content "space-between"
-              :padding "50px 30px"}}
+              :padding "50px 30px"}
+         :component "form"
+         :on-submit (fn [e] (.preventDefault e) (submitProfile name password profile-pic loading))}
 
         [typography
          {:variant "h5"
@@ -162,8 +164,8 @@
                   :align-items "center"}}
          [button
           {:variant "contained"
+           :type "submit"
            :disable-elevation true
-           :disabled (or (not (input-length-at-least name 3)) (not (input-length-at-least password 8)) (emptyPhoto profile-pic) (not (is-pwd-matched password password-confirm)) (not (check-username-valid name)) @loading)
-           :on-click #(submitProfile name password profile-pic loading)}
+           :disabled (or (not (input-length-at-least name 3)) (not (input-length-at-least password 8)) (emptyPhoto profile-pic) (not (is-pwd-matched password password-confirm)) (not (check-username-valid name)) @loading)}
           "Submit"]
          [circular-progress {:sx {:margin "10px" :visibility (when (not @loading) "hidden")}}]]]])))

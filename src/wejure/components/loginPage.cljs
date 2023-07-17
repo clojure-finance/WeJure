@@ -6,6 +6,7 @@
             [reagent-mui.material.circular-progress :refer [circular-progress]]
             [reagent-mui.material.text-field :refer [text-field]]
             [reagent-mui.material.typography :refer [typography]]
+            [reagent-mui.material.form-control :refer [form-control]]
             [reagent.core :as r]))
 
 (defn input-length-at-least [field min]                                    ;; check if the length of the input is at least min
@@ -38,7 +39,9 @@
             :display "flex"
             :flex-direction "column"
             :justify-content "space-between"
-            :padding "50px 30px"}}
+            :padding "50px 30px"}
+       :component "form"
+       :on-submit (fn [e] (.preventDefault e) (authenticate name password loading))}
 
       [typography
        {:variant "h5"
@@ -58,8 +61,8 @@
         {:variant "filled"
          :value @name
          :on-change (fn [e] (reset! name (.. e -target -value)))
-         :error (not (input-length-at-least name 3))
-         :helper-text (if (not (input-length-at-least name 3)) "Must contain 3-20 characters" " ")
+         :error (not (input-length-at-least name 1))
+         :helper-text (if (not (input-length-at-least name 1)) "Please enter your username" " ")
          :input-props {:max-length 20}}]]
 
       [:div
@@ -76,8 +79,8 @@
          :type "password"
          :value @password
          :on-change (fn [e] (reset! password (.. e -target -value)))
-         :error (not (input-length-at-least password 8))
-         :helper-text (if (not (input-length-at-least password 8)) "Must contain 8-20 characters" " ")
+         :error (not (input-length-at-least password 1))
+         :helper-text (if (not (input-length-at-least password 1)) "Please enter your password" " ")
          :input-props {:max-length 20}}]]
 
       [:div
@@ -86,8 +89,8 @@
                 :align-items "center"}}
        [button
         {:variant "contained"
+         :type "submit"
          :disable-elevation true
-         :disabled (or (not (input-length-at-least name 3)) (not (input-length-at-least password 8)) @loading)
-         :on-click #(authenticate name password loading)}
+         :disabled (or (not (input-length-at-least name 1)) (not (input-length-at-least password 1)) @loading)}
         "Submit"]
        [circular-progress {:sx {:margin "10px" :visibility (when (not @loading) "hidden")}}]]]])))
