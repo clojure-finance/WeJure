@@ -6,7 +6,6 @@
             [reagent-mui.material.circular-progress :refer [circular-progress]]
             [reagent-mui.material.text-field :refer [text-field]]
             [reagent-mui.material.typography :refer [typography]]
-            [reagent-mui.material.form-control :refer [form-control]]
             [reagent.core :as r]))
 
 (defn input-length-at-least [field min]                                    ;; check if the length of the input is at least min

@@ -14,7 +14,8 @@
             [reagent-mui.material.icon-button :refer [icon-button]]
             [reagent-mui.icons.close :refer [close]]
             [reagent-mui.material.dialog-actions :refer [dialog-actions]]
-            [reagent.core :as r]))
+            [reagent.core :as r]
+            [reitit.frontend.easy :as reitit-fe]))
 
 ;;(def ipfs-url "https://ipfs.io/ipfs/")               ;; IPFS gateway for retrieving files from IPFS
 (def ipfs-url "http://localhost:8080/ipfs/") ;;the default port of local ipfs app
@@ -104,10 +105,16 @@
                      :variant "contained"
                      :on-click #(profile/followUser (js/sessionStorage.getItem "username") username)}
              "Follow"]
-            [button {:sx {:mt 16 :mb 4 :mr 4 :width 100 :height 40 :border-radius 30}
-                     :variant "outlined"
-                     :on-click #(profile/unfollowUser (js/sessionStorage.getItem "username") username)}
-             "Unfollow"]))]]]
+            [box {:sx {:display "flex" :flex-direction "row"}}
+             [button {:sx {:mt 16 :mb 4 :mr 2 :width 100 :height 40 :border-radius 30}
+                      :variant "contained"
+                      :href (reitit-fe/href :wejure.core/chat)
+                      :on-click #(js/sessionStorage.setItem "chat_peer" username)}
+              "Message"]
+             [button {:sx {:mt 16 :mb 4 :mr 4 :width 100 :height 40 :border-radius 30}
+                      :variant "outlined"
+                      :on-click #(profile/unfollowUser (js/sessionStorage.getItem "username") username)}
+              "Unfollow"]]))]]]
 
      [box {:sx {:display "flex" :flex-direction "column" :align-items "center"}}                   ;; showing posts
       (for [post (vals (into (sorted-map-by >) @post-list))]                                       ;; sort the post (newest first) and discard the timekey

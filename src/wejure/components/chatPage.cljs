@@ -47,6 +47,12 @@
 (defn chat-page []
   (when (= 0 (count @recipient-list))
     (chat/init @username))
+  (when (not= (js/sessionStorage.getItem "chat_peer") nil)                                          ;; navigated from a user's profile page
+    (reset! selected-recipient (js/sessionStorage.getItem "chat_peer"))
+    (js/sessionStorage.removeItem "chat_peer")
+    (println @selected-recipient)
+    (reset! message-list [])
+    (chat/displayMessage @selected-recipient))
   [:div
    [grid {:container true :spacing 2 :px "20%" :my 1}                                               ;; using grid layout for the page
     [grid {:item true :xs 9}
