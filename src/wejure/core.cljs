@@ -1,20 +1,22 @@
 (ns wejure.core
   (:require [reagent.core :as r]
             [reagent.dom :as rdom]
-            [wejure.components.testPage :refer [test-page]]
+            ;; [wejure.components.testPage :refer [test-page]]
             [reitit.frontend :as reitit-f]
             [reitit.frontend.easy :as reitit-fe]
             [reitit.frontend.controllers :as reitit-fc]
             [reitit.coercion.spec :as rss]
             [spec-tools.data-spec :as ds]
             [wejure.components.mainPage :refer [main-page]]
-            [wejure.components.navigationBar :refer [title-page-bar sign-in-bar main-page-bar chat-page-bar test-page-bar]]
+            [wejure.components.navigationBar :refer [title-page-bar sign-in-bar main-page-bar chat-page-bar]]
             [wejure.components.titlePage :refer [title-page]]
             [wejure.components.registrationPage :refer [registration-page]]
             [wejure.components.loginPage :refer [login-page]]
             [wejure.components.profilePage :refer [profile-page]]
             [wejure.components.chatPage :refer [chat-page]]
-            [wejure.components.searchPage :refer [search-page]]))   
+            [wejure.components.searchPage :refer [search-page]]
+            [wejure.components.searchPagePost :refer [search-page-post]]
+            ))   
 
 (defonce route-state (r/atom nil))
 
@@ -24,8 +26,8 @@
           :controllers [{:start (fn []                                                            ;; redirect to home page if logged in
                                   (when (not= nil (js/sessionStorage.getItem "pair"))
                                     (set! js/window.location.href (reitit-fe/href :wejure.core/home))))}]}]
-    ["/test" {:name ::test
-              :view test-page}]
+    ;; ["/test" {:name ::test
+    ;;           :view test-page}]
     ["/register" {:name ::register
                   :view registration-page
                   :controllers [{:start (fn []                                                    ;; redirect to home page if logged in
@@ -48,6 +50,13 @@
                                              :start (fn []                                        ;; redirect to title page if not logged in
                                                       (when (= nil (js/sessionStorage.getItem "pair"))
                                                         (set! js/window.location.href (reitit-fe/href :wejure.core/title))))}]}]
+    ["/searchPost/:search-input" {:name ::search-post
+                          :view search-page-post
+                          :parameters {:path {:search-input string?}}
+                          :controllers [{:parameters {:path [:search-input]}
+                                         :start (fn []                                        ;; redirect to title page if not logged in
+                                                  (when (= nil (js/sessionStorage.getItem "pair"))
+                                                    (set! js/window.location.href (reitit-fe/href :wejure.core/title))))}]}]
     ["/user/:username" {:name ::user
                         :view profile-page
                         :parameters {:path {:username string?}}
@@ -83,7 +92,9 @@
      :wejure.core/main [main-page-bar]
      :wejure.core/search [main-page-bar]
      :wejure.core/chat [chat-page-bar]
-     :wejure.core/test [test-page-bar]
+      :wejure.core/search-post [main-page-bar]
+
+    ;;  :wejure.core/test [test-page-bar]
      [main-page-bar])
    [:div 
     {:style {:height "100%" :overflow "auto"}}

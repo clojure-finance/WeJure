@@ -18,6 +18,8 @@
 
 (def search-input (r/atom ""))
 
+(def search-mode (r/atom :user))
+
 (defn title-page-bar []
   [app-bar
    {:position "static"
@@ -73,6 +75,13 @@
      {:style {:display "flex"
               :align-items "center"
               :margin "0 2px 0 0"}}
+     ;; add a button to switch the search mode between user and post, if the current search mode is user, switch to post and vice versa
+    [button
+    {:color "inherit"
+      :variant (if (= @search-mode :user) "contained" "outlined")
+      :on-click #(reset! search-mode (if (= @search-mode :user) :post :user))}
+    (if (= @search-mode :user) "User" "Post")]
+     
      [text-field {:sx {:background-color "white" :mx 2}
                   :variant "filled"
                   :placeholder "Search"
@@ -82,8 +91,11 @@
                   :on-change (fn [event]
                                (reset! search-input (-> event .-target .-value)))
                   :on-key-down (fn [event]
-                                 (when (and (not= @search-input "") (= (.-keyCode event) 13))                  ;; navigate to search result page when Enter is pressed
-                                   (set! js/window.location.href (reitit-fe/href :wejure.core/search {:search-input @search-input}))))}]
+                                 (when (and (not= @search-input "") (= (.-keyCode event) 13))
+                                   (let [route-name (case @search-mode
+                                                      :user :wejure.core/search
+                                                      :post :wejure.core/search-post)]
+                                     (set! js/window.location.href (reitit-fe/href route-name {:search-input @search-input})))))}]
      [typography
       {:variant "h6"
        :component "div"
@@ -155,56 +167,56 @@
        :on-click #(logoutFunction)}
       "Logout"]]]])
 
-(defn test-page-bar []
-  [app-bar
-   {:position "static"
-    :sx {:background-color "#070707"}}
-   [toolbar
-    [:a.navbar-item
-     {:href (reitit-fe/href :wejure.core/home)}
-     [:img
-      {:src "http://localhost:8020/logo_white.png"
-       :style {:height "50px"
-               :margin "3px 20px 0 0"}}]]
-    [:div
-     {:style {:flex-grow "1"}}]
+;; (defn test-page-bar []
+;;   [app-bar
+;;    {:position "static"
+;;     :sx {:background-color "#070707"}}
+;;    [toolbar
+;;     [:a.navbar-item
+;;      {:href (reitit-fe/href :wejure.core/home)}
+;;      [:img
+;;       {:src "http://localhost:8020/logo_white.png"
+;;        :style {:height "50px"
+;;                :margin "3px 20px 0 0"}}]]
+;;     [:div
+;;      {:style {:flex-grow "1"}}]
   
-    [:div
-     {:style {:display "flex"
-              :align-items "center"
-              :margin "0 2px 0 0"}}
+;;     [:div
+;;      {:style {:display "flex"
+;;               :align-items "center"
+;;               :margin "0 2px 0 0"}}
 
-     [text-field {:sx {:background-color "white" :mx 2}
-                  :variant "filled"
-                  :placeholder "Search"
-                  :size "small"
-                  :hidden-label true
-                  :value @search-input
-                  :on-change (fn [event]
-                               (reset! search-input (-> event .-target .-value)))
-                  :on-key-down (fn [event]
-                                 (when (and (not= @search-input "") (= (.-keyCode event) 13))                         ;; navigate to search result page when Enter is pressed
-                                   (set! js/window.location.href (reitit-fe/href :wejure.core/search {:search-input @search-input}))))}]
-     [typography
-      {:variant "h6"
-       :component "div"
-       :sx {:font-size "12px" :margin "0 20px 0 0"}}
-      (js/sessionStorage.getItem "username")]
+;;      [text-field {:sx {:background-color "white" :mx 2}
+;;                   :variant "filled"
+;;                   :placeholder "Search"
+;;                   :size "small"
+;;                   :hidden-label true
+;;                   :value @search-input
+;;                   :on-change (fn [event]
+;;                                (reset! search-input (-> event .-target .-value)))
+;;                   :on-key-down (fn [event]
+;;                                  (when (and (not= @search-input "") (= (.-keyCode event) 13))                         ;; navigate to search result page when Enter is pressed
+;;                                    (set! js/window.location.href (reitit-fe/href :wejure.core/search {:search-input @search-input}))))}]
+;;      [typography
+;;       {:variant "h6"
+;;        :component "div"
+;;        :sx {:font-size "12px" :margin "0 20px 0 0"}}
+;;       (js/sessionStorage.getItem "username")]
 
-     [:a.navbar-item
-      {:href (reitit-fe/href :wejure.core/user {:username (js/sessionStorage.getItem "username")})}
-      [avatar {:sx {:width 50 :height 50}
-               :src (str ipfs-url (js/sessionStorage.getItem "icon_cid"))}]]     ;; retrieve the user icon image from IPFS
+;;      [:a.navbar-item
+;;       {:href (reitit-fe/href :wejure.core/user {:username (js/sessionStorage.getItem "username")})}
+;;       [avatar {:sx {:width 50 :height 50}
+;;                :src (str ipfs-url (js/sessionStorage.getItem "icon_cid"))}]]     ;; retrieve the user icon image from IPFS
 
-     [button
-      {:color "inherit"
-       :variant "outlined"
-       :sx {:mx 2}
-       :href (reitit-fe/href :wejure.core/chat)}
-      "Message"]
+;;      [button
+;;       {:color "inherit"
+;;        :variant "outlined"
+;;        :sx {:mx 2}
+;;        :href (reitit-fe/href :wejure.core/chat)}
+;;       "Message"]
 
-     [button
-      {:color "inherit"
-       :variant "outlined"
-       :on-click #(logoutFunction)}
-      "Logout"]]]])
+;;      [button
+;;       {:color "inherit"
+;;        :variant "outlined"
+;;        :on-click #(logoutFunction)}
+;;       "Logout"]]]])

@@ -28,6 +28,10 @@
 
 (def bio-input (r/atom ""))
 
+(defn delete-post [username timekey]
+  (gun/del "post" username timekey)
+  (js/window.location.reload))
+
 (defn load-post [user]
   (gun/map-once "post" user (fn [post time-key]
                               (when (not= post nil)
@@ -39,6 +43,7 @@
                                              (swap! post-list assoc (keyword time-key) @post-with-icon-cid))))                      ;; adding the post to post-list
                                   ;; case for more than one post for a particular timekey:
                                   (swap! post-list assoc (keyword time-key) (conj ((keyword time-key) @post-list) (clojure.walk/keywordize-keys (into {} (rest (js->clj post)))))))))))
+
 
 ;; function to add key-value pair to the target map, used in profile.js
 (defn ^:export map-assoc [target-atom key value]
@@ -137,7 +142,12 @@
                       (when (not= (:image post) nil)                                                     ;; post image
                         [box {:sx {:background-color "black" :display "flex" :justify-content "center"}}
                          [:img {:style {:max-width "850px"}
-                                :src (str ipfs-url (:image post))}]])])]
+                                :src (str ipfs-url (:image post))}]])
+                      (when (= (:username post) (js/sessionStorage.getItem "username"))
+                        [button
+                         {:sx {:mx 1 :my 1}
+                          :on-click #(delete-post (:username post) (keyword (:timestamp post)))}
+                         "Delete"])])]
 
      [dialog {:open @form-open :on-close #(close-edit-profile-form (:bio @profile-info))}
       [dialog-title {:sx {:display "flex"                                                   ;; components for starting a new post

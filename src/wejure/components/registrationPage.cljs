@@ -21,6 +21,7 @@
 (defn is-pwd-matched [pwd pwd-confirm]
   (= @pwd @pwd-confirm))
 
+
 (defn check-username-valid [username]
   (let [valid (atom true)]
     (doseq [chr @username]
@@ -34,25 +35,35 @@
   (set! js/window.location.href (reitit-fe/href :wejure.core/login)))
 
 (defn ^:export stopLoading []
-  (reset! @loading-ref false))
+  (reset! @loading-ref false))  ;; bug? should be (reset! loading-ref false), but it works
 
-(defn submitProfile [name password photo loading]
+(defn submitProfile [name password photo loading] 
   (reset! loading-ref loading)
   (reset! loading true)
-  (let [blob (js/Blob. (clj->js [@photo]) #js {:type "image/*"})]          ;; convert the image to JavaScript blob object
-    (ifiles/add blob {:path (.-name @photo)}                               ;; upload the image to IPFS
+  
+  (println "Creating blob...")
+  (let [blob (js/Blob. (clj->js [@photo]) #js {:type "image/*"})]
+    (println "Blob created:" blob)
+    
+    (println "Uploading to IPFS...")
+    (ifiles/add blob {:path (.-name @photo)}
                 (fn [err files]
                   (if err
-                    (println (str "err: " err))
-                    (let [cid (. (. js/JSON parse files) -Hash)]           ;; get the image file CID after completing the upload to IPFS
-                      (acc/register @name @password cid)))))))             ;; register the user account and store the CID in gunDB
+                    (do
+                      (println "Error uploading to IPFS:" err)
+                      (reset! loading false))
+                    (let [cid (. (. js/JSON parse files) -Hash)]
+                      (println "Uploaded to IPFS. CID:" cid)
+                      (println "Registering user account...")
+                      (acc/register @name @password cid)
+                      (println "User account registered.")))))))
 
 (defn registration-page []
   (let [name (r/atom nil) password (r/atom nil) password-confirm (r/atom nil) profile-pic (r/atom nil) loading (r/atom false)]
     (init-ipfs {:host "	http://127.0.0.1:5001"})                           ;; initialize IPFS with localhost (need to run a IPFS client locally)
     (fn []
       [:div
-       {:style {:height "100%" :display "flex" :justify-content "center" :align-items "center"}}
+       {:style {:height "100%" :display "flex" :justify-content "center" :align-items "center", :posotion "relative"}}
        [box
         {:sx {:height "500px"
               :width "350px"
@@ -168,4 +179,13 @@
            :disable-elevation true
            :disabled (or (not (input-length-at-least name 3)) (not (input-length-at-least password 8)) (emptyPhoto profile-pic) (not (is-pwd-matched password password-confirm)) (not (check-username-valid name)) @loading)}
           "Submit"]
-         [circular-progress {:sx {:margin "10px" :visibility (when (not @loading) "hidden")}}]]]])))
+         [circular-progress {:sx {:margin "10px" :visibility (when (not @loading) "hidden")}}]]
+        
+        [:div
+             {:style {:position "absolute"
+                      :bottom "20px"
+                      :left "20px"}}
+             [text-field
+              {:variant "filled"
+               :default-value "zjyTesting"
+               :input-props {:read-only true}}]]]])))
