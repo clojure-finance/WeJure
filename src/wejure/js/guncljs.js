@@ -11,8 +11,24 @@ export function put() {                                         // n parameters 
     for (i = 0; i <= arguments.length - 3; i++) {               // concatenate the gun data path
         path += arguments[i] + "/";
     }
-    path = path.substring(0, path.length - 1);   
-    gun.get(path).get(key).put(value);                          // put the value into the database
+    path = path.substring(0, path.length - 1);
+    let keyword = key;
+    console.log("path", path);
+    console.log("keyword", keyword);
+    gun.get(path).get(keyword).put(value);                          // put the value into the database
+}
+
+export function del() {
+    let path = "";                                              // 0 to (n-2): gun data path / context
+    let key = arguments[arguments.length - 1];                  // (n-1)th: gun data key
+    for (i = 0; i <= arguments.length - 2; i++) {               // concatenate the gun data path
+        path += arguments[i] + "/";
+    }
+    path = path.substring(0, path.length - 1);
+    let keyword = key.name;
+    console.log("path", path);
+    console.log("keyword", keyword);
+    gun.get(path).get(keyword).put(null);                          // delete the value from the database
 }
 
 export function once() {                                        // n parameters (index from 0 to n-1)
@@ -23,7 +39,13 @@ export function once() {                                        // n parameters 
         path += arguments[i] + "/";
     }
     path = path.substring(0, path.length - 1);   
-    gun.get(path).get(key).once((data, key) => {                // executing the custom function
+    // print out the path and key
+    // console.log("path", path);
+    // console.log("key", key);
+    // key {ns: null, name: 'Wed, 28 Aug 2024 14:11:15 GMT', fqn: 'Wed, 28 Aug 2024 14:11:15 GMT', _hash: null, cljs$lang$protocol_mask$partition0$: 2153775105, …}
+    let keyword = key.name;
+    // console.log("keyword", keyword);
+    gun.get(path).get(keyword).once((data, keyword) => {                // executing the custom function
         func(data, key);
     });
 }
@@ -49,4 +71,3 @@ export function map_once() {                                    // n parameters 
         func(data, key);
     });                                   
 }
-
