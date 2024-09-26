@@ -4,6 +4,11 @@
 if ! command -v brew &> /dev/null
 then
     /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+    # 配置环境变量
+    echo 'export PATH="/opt/homebrew/bin:$PATH"' >> ~/.bash_profile 
+    source ~/.bash_profile
+    echo 'export PATH="/opt/homebrew/bin:$PATH"' >> ~/.zshrc
+    source ~/.zshrc
 fi
 
 # 安装 Node.js 和 Yarn
