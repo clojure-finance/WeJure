@@ -38,32 +38,33 @@
 
 (defn search-page-post [{{:keys [search-input]} :path-params}]
   (println "Search input:" search-input)
-  (when (= 0 (count @post-result-list))                           ;; search for post results based on the search input string in the navigation bar
+  (when (= 0 (count @post-result-list))
     (println "Search post result")
     (search-post search-input))
   [:div
-   {:style {:margin "25px 20% 25px 20%"}}
+   {:style {:margin "25px 10% 25px 10%"}}
    [typography
     {:variant "h5"
-     :component "div"}
-    "Search result for: " search-input]
-   [paper {:id "search-result-box"                           ;; display the post search result
-           :variant "outlined"
-           :sx {:height 800 :my 2 :overflow "auto"}}
-    (for [result (js->clj @post-result-list :keywordize-keys true)]
-      ^{:key (:timestamp result)}
-      [box {:sx {:display "flex" :box-shadow 1}}
-       [avatar {:sx {:mx 4 :my 2 :width 48 :height 48}                            ;; user avatar
-                :src (str ipfs-url (get result :icon_cid))}]
-       [box {:sx {:display "flex" :flex-direction "column"}}
-        [typography {:sx {:mx 2 :my 1 :font-size "20px"}}                          ;; username
-         (get result :username)]
-        [typography {:sx {:mx 2 :my 1 :font-size "16px" :color "text.secondary"}}  ;; timestamp
-         (get result :timestamp)]]
-       [typography {:sx {:mx 4 :my 2}}                                            ;; post text
-        (get result :text)]
-       (when (get result :image)                                                 ;; post image (if exists)
-         [box {:sx {:display "flex" :justify-content "center"}}
-          [:img {:src (str ipfs-url (get result :image)) :style {:max-width "100%" :max-height 400}}]])])]])
+     :component "div"
+     :gutterBottom true}
+    "Search Results for: " search-input]
+   [paper {:variant "outlined"
+           :sx {:p 2, :mb 2}}
+    (if (empty? @post-result-list)
+      [typography {:align "center"} "No results found."]
+      (for [result (js->clj @post-result-list :keywordize-keys true)]
+        ^{:key (:timestamp result)}
+        [paper {:sx {:mb 2, :p 2}}
+         [box {:sx {:display "flex" :alignItems "center"}}
+          [avatar {:sx {:mr 2}
+                   :src (str ipfs-url (get result :icon_cid))}]
+          [box
+           [typography {:variant "subtitle1"} (get result :username)]
+           [typography {:variant "caption" :color "text.secondary"} (get result :timestamp)]]]
+         [typography {:sx {:mt 1}} (get result :text)]
+         (when (get result :image)
+           [box {:sx {:display "flex" :justifyContent "center"}}
+            [:img {:src (str ipfs-url (get result :image))
+                   :style {:maxWidth "100%" :maxHeight 400}}]])]))]])
 
 ;; 加一个点头像能redirect到用户profile的功能

@@ -42,6 +42,31 @@ export function unfollowUser(self, username) {                          // follo
     getIsFollowing(self, username);                                     // update the profile-info atom and refresh the page    
 }
 
+export function followUserLable(self, username, label) {                            // follow username account with the self account
+    gun.get("user").get(self).get("is_following").get(label).set(username)
+    getIsFollowingLabeled(self, username);                                     // update the profile-info atom and refresh the page
+}
+
+export function unfollowUserLable(self, username,label) {                          // follow username account with the self account
+    gun.get("user").get(self).get("is_following").get(label).put(null);
+    getIsFollowingLabedled(self, username);                                     // update the profile-info atom and refresh the page    
+}
+
+export function getIsFollowingLabeled(self, username) {
+    let followed = false;
+    gun.get("user").get(self).get("is_following").map((label, key) => {
+        if (label === username) {
+            wejure.components.profilePage.map_assoc(window.wejure.components.profilePage.profile_info, "is_following", true);
+            wejure.components.profilePage.map_assoc(window.wejure.components.profilePage.profile_info, "follow_label", key);
+            followed = true;
+        }
+    });
+    if (followed === false) {
+        wejure.components.profilePage.map_assoc(window.wejure.components.profilePage.profile_info, "is_following", false);
+        wejure.components.profilePage.map_assoc(window.wejure.components.profilePage.profile_info, "follow_label", null);
+    }
+}
+
 export function getIsFollowing(self, username) {                                    // check whether self account is following the profile page visited
     let followed = false;                                                           // and add the information to the profile-info atom
     gun.get("user").get(self).get("is_following").get(username).once((followStatus) => {

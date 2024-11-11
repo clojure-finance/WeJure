@@ -25,8 +25,44 @@
 (def post-list (r/atom nil))
 
 (def form-open (r/atom false))
+(def follow-form-open (r/atom false))
 
 (def bio-input (r/atom ""))
+
+(def label-input (r/atom ""))
+
+(def following-dialog-open (r/atom false))
+(defn count-following []
+  (let [count-atom (atom 0)
+        current-user (js/sessionStorage.getItem "username")]
+    (gun/map-once "user" current-user "is_following"
+                  (fn [is-following username]
+                    (when (and (= is-following true) (not= username current-user))
+                      (swap! count-atom inc))))
+    @count-atom))
+
+;; (defn get-following-list []
+;;   (let [following-list (r/atom [])
+;;         current-user (js/sessionStorage.getItem "username")]
+;;     (gun/map-once "user" current-user "is_following"
+;;                   (fn [is-following username]
+;;                     (when (and (= is-following true) (not= username current-user))
+;;                       (let [icon-cid (profile/getIconCID username)]
+;;                         (when (not (nil? icon-cid))
+;;                           (swap! following-list conj {:username username
+;;                                                       :icon_cid icon-cid}))))))
+;;     @following-list))
+(defn get-following-list []
+  (let [following-map (r/atom {})
+        current-user (js/sessionStorage.getItem "username")]
+    (gun/map-once "user" current-user "is_following"
+                  (fn [label username]
+                    (when (and label username (not= username current-user))
+                      (let [icon-cid (profile/getIconCID username)]
+                        (when (not (nil? icon-cid))
+                          (swap! following-map update-in [(keyword label)] conj {:username username
+                                                                                 :icon_cid icon-cid}))))))
+    @following-map))
 
 (defn delete-post [username timekey]
   (gun/del "post" username timekey)
@@ -97,18 +133,26 @@
          username]
         [typography {:sx {:font-size "15px" :white-space "break-spaces" :word-wrap "break-word"}}
          (:bio @profile-info)]]
-       [box {:style {:display "flex" :flex-grow 1 :justify-content "flex-end"}}
+       
+       [box {:style {:display "flex" :flex-grow 1}}
+        [button {:sx {:mt 16 :mb 4 :mr 4 :width 140 :height 40 :border-radius 30}
+                 :variant "outlined"
+                 :on-click (fn []
+                             (reset! following-dialog-open true))}
+         (str (count-following) " Following")]]
+
+       [box {:style {:display "flex" :flex-grow 1 :justify-content "flex-end"}} 
         (if (= (js/sessionStorage.getItem "username") username)
-          [button {:sx {:mt 16 :mb 4 :mr 4 :width 140 :height 40 :border-radius 30}                    ;; button to edit profile page if it belongs to the user
+          [button {:sx {:mt 16 :mb 4 :mr 4 :width 140 :height 40 :border-radius 30}
                    :variant "contained"
                    :on-click (fn []
                                (reset! bio-input (:bio @profile-info))
                                (reset! form-open true))}
            "Edit Profile"]
-          (if (= (:is_following @profile-info) false)                                                   ;; button to follow / unfollow the user
+          (if (= (:is_following @profile-info) false)
             [button {:sx {:mt 16 :mb 4 :mr 4 :width 100 :height 40 :border-radius 30}
                      :variant "contained"
-                     :on-click #(profile/followUser (js/sessionStorage.getItem "username") username)}
+                     :on-click #(reset! follow-form-open true)}
              "Follow"]
             [box {:sx {:display "flex" :flex-direction "row"}}
              [button {:sx {:mt 16 :mb 4 :mr 2 :width 100 :height 40 :border-radius 30}
@@ -119,7 +163,8 @@
              [button {:sx {:mt 16 :mb 4 :mr 4 :width 100 :height 40 :border-radius 30}
                       :variant "outlined"
                       :on-click #(profile/unfollowUser (js/sessionStorage.getItem "username") username)}
-              "Unfollow"]]))]]]
+              "Unfollow"]]))
+        ]]]
 
      [box {:sx {:display "flex" :flex-direction "column" :align-items "center"}}                   ;; showing posts
       (for [post (vals (into (sorted-map-by >) @post-list))]                                       ;; sort the post (newest first) and discard the timekey
@@ -143,11 +188,15 @@
                         [box {:sx {:background-color "black" :display "flex" :justify-content "center"}}
                          [:img {:style {:max-width "850px"}
                                 :src (str ipfs-url (:image post))}]])
-                      (when (= (:username post) (js/sessionStorage.getItem "username"))
-                        [button
-                         {:sx {:mx 1 :my 1}
-                          :on-click #(delete-post (:username post) (keyword (:timestamp post)))}
-                         "Delete"])])]
+                      
+                      [box {:sx {:display "flex" :justify-content "flex-end"}}
+                       (when (= (:username post) (js/sessionStorage.getItem "username"))
+                         [button
+                          {:variant "outlined"
+                           :sx {:mx 1 :my 1}
+                           :on-click #(delete-post (:username post) (keyword (:timestamp post)))}
+                          "Delete"])]
+                      ])]
 
      [dialog {:open @form-open :on-close #(close-edit-profile-form (:bio @profile-info))}
       [dialog-title {:sx {:display "flex"                                                   ;; components for starting a new post
@@ -173,4 +222,47 @@
                      (profile/updateBio username @bio-input)
                      (close-edit-profile-form (:bio @profile-info))
                      (swap! profile-info assoc :bio @bio-input))}
-        "Save changes"]]]]))
+        "Save changes"]]]
+      [dialog {:open @follow-form-open :on-close #(reset! follow-form-open false)}
+       [dialog-title {:sx {:display "flex"
+                           :flex-direction "row"
+                           :justify-content "space-between"}}
+        "Add a label"
+        [icon-button {:on-click #(reset! follow-form-open false)}
+         [close]]]
+       [dialog-content
+        [box {:sx {:display "flex" :flex-direction "column"}}
+         [button {:sx {:margin 1} :variant "outlined"
+                  :on-click #(reset! label-input "clojure script")} "clojure script"]
+         [button {:sx {:margin 1} :variant "outlined"
+                  :on-click #(reset! label-input "java script")} "java script"]
+         [button {:sx {:margin 1} :variant "outlined"
+                  :on-click #(reset! label-input "python")} "python"]
+         [button {:sx {:margin 1} :variant "outlined"
+                  :on-click #(reset! label-input "food")} "food"]
+         [text-field {:sx {:margin 1} :label "custom label"
+                      :value @label-input
+                      :on-change #(reset! label-input (-> % .-target .-value))}]]]
+       [dialog-actions
+        [button {:on-click (fn []
+                             (profile/followUserLabel (js/sessionStorage.getItem "username") username @label-input)
+                             (reset! follow-form-open false))}
+         "Confirm"]]] 
+         
+
+         [dialog {:open @following-dialog-open :on-close #(reset! following-dialog-open false)}
+          [dialog-title "Following"]
+          [dialog-content
+           [box {:sx {:display "flex" :flex-direction "column"}}
+            (doall
+             (for [[label followings] (get-following-list)]
+               ^{:key label} [box {:sx {:mb 2}}
+                              [typography {:variant "h6"} (name label)]
+                              (for [following followings]
+                                ^{:key following} [box {:sx {:display "flex" :align-items "center" :my 1}}
+                                                   [avatar {:sx {:width 40 :height 40 :mr 2}
+                                                            :src (str ipfs-url (:icon_cid following))}]
+                                                   [typography {:variant "subtitle1"} (:username following)]])]))]]
+          [dialog-actions
+           [button {:on-click #(reset! following-dialog-open false)} "Close"]]]
+         ]))
