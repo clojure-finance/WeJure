@@ -39,8 +39,8 @@
        [avatar {:sx {:mx 4 :my 2 :width 48 :height 48}                            ;; user avatar
                 :src (str ipfs-url (get result :icon_cid))}]
        [typography {:sx {:mx 2 :my 3 :font-size "20px"}}                          ;; username
-        (get result :username)]
-       [box {:style {:display "flex" :flex-grow 1 :justify-content "flex-end"}}   ;; button for redirecting to the user profile
+        (get result :username)] 
+       [box {:style {:display "flex" :flex-grow 1 :justify-content "flex-end"}}   ;; button for redirecting to the user profile 
         [button {:sx {:my 3 :mr 4 :width 80 :height 35}
                  :variant "contained"
                  :href (reitit-fe/href :wejure.core/user {:username (get result :username)})}

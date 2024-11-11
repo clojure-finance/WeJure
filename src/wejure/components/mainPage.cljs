@@ -25,6 +25,15 @@
 (def text-input (r/atom nil))
 
 (def image-input (r/atom nil))
+
+(defn clear-gun-db []
+  (let [confirmation (js/confirm "Are you sure you want to clear all data in GunDB? This action cannot be undone.")]
+    (when confirmation
+      (gun/clear)
+      (js/alert "GunDB data has been cleared.")
+      ;; (js/window.location.reload)
+      )))
+
 ;; function for storing the post made by the user in gunDB 
 (defn store-post [username text image-cid]
   (let [timestamp (.toUTCString (new js/Date.))
@@ -33,21 +42,21 @@
     (gun/put "post" username timestamp (clj->js post))))
 
 ;; function for retrieving the posts made by the accounts that the user follows, called when the home page is loaded
-  (defn load-post []
-    (println "current time" (.getTime (new js/Date.)))
-    (gun/map-once "user" (js/sessionStorage.getItem "username") "is_following"
-                  (fn [is-following user]                                      ;; for each account that the user is following, retrieve the posts 
-                    (when (= is-following true)
-                      (gun/map-once "post" user (fn [post time-key]
-                                                  (when (not= post nil)
-                                                    (if (= nil ((keyword time-key) @post-list))
-                                                      (let [post-with-icon-cid (atom (clojure.walk/keywordize-keys (into {} (rest (js->clj post)))))]   ;; first post for the timekey, take only essential info
-                                                        (.then (js/Promise.resolve (profile/getIconCID (:username @post-with-icon-cid)))                ;; retrieving the icon_cid of the post owner
-                                                               (fn [resolve]
-                                                                 (swap! post-with-icon-cid assoc :icon_cid resolve)                                     ;; adding the icon_cid of post owner
-                                                                 (swap! post-list assoc (keyword time-key) @post-with-icon-cid))))                      ;; adding the post to post-list
-                                                    ;; case for more than one post for a particular timekey:
-                                                      (swap! post-list assoc (keyword time-key) (conj ((keyword time-key) @post-list) (clojure.walk/keywordize-keys (into {} (rest (js->clj post))))))))))))))
+  ;; (defn load-post []
+  ;;   (println "current time" (.getTime (new js/Date.)))
+  ;;   (gun/map-once "user" (js/sessionStorage.getItem "username") "is_following"
+  ;;                 (fn [is-following user]                                      ;; for each account that the user is following, retrieve the posts 
+  ;;                   (when (= is-following true)
+  ;;                     (gun/map-once "post" user (fn [post time-key]
+  ;;                                                 (when (not= post nil)
+  ;;                                                   (if (= nil ((keyword time-key) @post-list))
+  ;;                                                     (let [post-with-icon-cid (atom (clojure.walk/keywordize-keys (into {} (rest (js->clj post)))))]   ;; first post for the timekey, take only essential info
+  ;;                                                       (.then (js/Promise.resolve (profile/getIconCID (:username @post-with-icon-cid)))                ;; retrieving the icon_cid of the post owner
+  ;;                                                              (fn [resolve]
+  ;;                                                                (swap! post-with-icon-cid assoc :icon_cid resolve)                                     ;; adding the icon_cid of post owner
+  ;;                                                                (swap! post-list assoc (keyword time-key) @post-with-icon-cid))))                      ;; adding the post to post-list
+  ;;                                                   ;; case for more than one post for a particular timekey:
+  ;;                                                     (swap! post-list assoc (keyword time-key) (conj ((keyword time-key) @post-list) (clojure.walk/keywordize-keys (into {} (rest (js->clj post))))))))))))))
 
 ;;   (defn load-post-myself []
 ;;     (gun/map-once "post" (js/sessionStorage.getItem "username")
@@ -66,20 +75,21 @@
 ;;   (if (= request "self")
 ;;     (load-post-myself)
 ;;     (load-post)))
-  
-;; function for sorting the posts by time, which use the unixtime of the post
-(defn sort-by-time [post-list]
-  (into (sorted-map-by >) (map (fn [[timekey post]] [(:unixtime post) post]) post-list)))
 
-(defn sort-by-time-reverse [post-list]
-  (into (sorted-map-by <) (map (fn [[timekey post]] [(:unixtime post) post]) post-list)))
-
-(defn sort-by-alphabet [post-list]
-  (into (sorted-map-by <) (map (fn [[timekey post]] [(:text post) post]) post-list)))
-
-(defn sort-by-alphabet-reverse [post-list]
-  (into (sorted-map-by >) (map (fn [[timekey post]] [(:text post) post]) post-list)))
-
+(defn load-post []
+  (println "current time" (.getTime (new js/Date.)))
+  (gun/map-once "user" (js/sessionStorage.getItem "username") "is_following"
+                (fn [label username]
+                  (when username
+                    (gun/map-once "post" username (fn [post time-key]
+                                                    (when (not= post nil)
+                                                      (if (= nil ((keyword time-key) @post-list))
+                                                        (let [post-with-icon-cid (atom (clojure.walk/keywordize-keys (into {} (rest (js->clj post)))))]
+                                                          (.then (js/Promise.resolve (profile/getIconCID (:username @post-with-icon-cid)))
+                                                                 (fn [resolve]
+                                                                   (swap! post-with-icon-cid assoc :icon_cid resolve)
+                                                                   (swap! post-list assoc (keyword time-key) @post-with-icon-cid))))
+                                                        (swap! post-list assoc (keyword time-key) (conj ((keyword time-key) @post-list) (clojure.walk/keywordize-keys (into {} (rest (js->clj post))))))))))))))
   
 (defn delete-post [username timekey]
   (gun/del "post" username timekey)
@@ -173,6 +183,14 @@
                :disable-elevation true
                :on-click #(submit-post text-input image-input loading)}
               "Post"]]]]]
+         
+         [box {:sx {:display "flex" :justify-content "center"}}
+          [button
+           {:variant "contained"
+            :color "secondary"
+            :sx {:my 2}
+            :on-click clear-gun-db}
+           "Clear GunDB"]]
 
          [box {:sx {:display "flex" :flex-direction "column" :align-items "center"}}
           (for [post (vals (into (sorted-map-by >) @post-list))]
@@ -189,19 +207,23 @@
                              (:username post)]]
                            [typography {:sx {:mx 1 :my 3 :font-size "10px"}}
                             (.toLocaleString (new js/Date. (:timestamp post)))]
-
-                                  ;; Add delete button
-                           (when (= (:username post) (js/sessionStorage.getItem "username"))
-                             [button
-                              {:sx {:mx 1 :my 1}
-                               :on-click #(delete-post (:username post) (keyword (:timestamp post)))}
-                              "Delete"])]
+                          ]
 
                           (when (not= (:text post) nil)                                                      ;; post text
                             [typography {:sx {:mx 2 :my 2 :font-size "16px" :white-space "break-spaces"}}
                              (:text post)])
-
+                          
                           (when (not= (:image post) nil)                                                     ;; post image
                             [box {:sx {:background-color "black" :display "flex" :justify-content "center"}}
                              [:img {:style {:max-width "850px"}
-                                    :src (str ipfs-url (:image post))}]])])]])))
+                                    :src (str ipfs-url (:image post))}]])
+                          
+                          ;; delete button
+                      [box {:sx {:display "flex" :justify-content "flex-end"}}
+                       (when (= (:username post) (js/sessionStorage.getItem "username"))
+                         [button
+                          {:variant "outlined"
+                           :sx {:mx 1 :my 1}
+                           :on-click #(delete-post (:username post) (keyword (:timestamp post)))}
+                          "Delete"])]
+                          ])]])))

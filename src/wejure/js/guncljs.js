@@ -31,6 +31,15 @@ export function del() {
     gun.get(path).get(keyword).put(null);                          // delete the value from the database
 }
 
+
+export function clear() {
+    let user = "user";
+    console.log(gun.get(user));
+    gun.get(user).put(null);
+    let post = "post";
+    gun.get(post).put(null);
+}
+
 export function once() {                                        // n parameters (index from 0 to n-1)
     let path = "";                                              // 0 to (n-3): gun data path / context
     let key = arguments[arguments.length - 2];                  // (n-2)th: gun data key

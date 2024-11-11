@@ -1,7 +1,13 @@
 #!/bin/bash
 
 # 启动 IPFS 守护进程
-ipfs daemon &
+if ! pgrep -x "ipfs" > /dev/null
+then
+    ipfs daemon &
+else
+    echo "IPFS daemon is already running."
+fi
+# ipfs daemon &
 
 # 启动 Gun 中继服务器
 osascript -e 'tell application "Terminal"
