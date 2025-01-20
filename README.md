@@ -22,3 +22,7 @@ To run or configure WeJure on your local environment, first navigate to `src/wej
 
 ## User guide
 Users will need to create an account or sign in from the top right corner of the main page. After loggin in, users will be able to send messages to other users online.
+
+## Configuration
+### IPFS
+- The port for IPFS should be 5001. If not, you can correct the settings by run `ipfs config Addresses.API /ip4/127.0.0.1/tcp/5001` in terminal.
