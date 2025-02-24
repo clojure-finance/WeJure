@@ -11,11 +11,9 @@ New-Item -ItemType Directory -Force -Path $IPFS_INSTALL_DIR
 # download IPFS
 Write-Host "downloading IPFS..."
 Invoke-WebRequest -Uri $IPFS_URL -OutFile $IPFS_ZIP
-
 # unzip IPFS
 Write-Host "unzipping IPFS..."
 Expand-Archive -Path $IPFS_ZIP -DestinationPath $IPFS_INSTALL_DIR -Force
-
 # check the unzipped files
 Write-Host "checking the unzipped files..."
 Get-ChildItem -Path $IPFS_INSTALL_DIR

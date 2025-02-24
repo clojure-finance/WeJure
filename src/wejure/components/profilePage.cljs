@@ -41,17 +41,6 @@
                       (swap! count-atom inc))))
     @count-atom))
 
-;; (defn get-following-list []
-;;   (let [following-list (r/atom [])
-;;         current-user (js/sessionStorage.getItem "username")]
-;;     (gun/map-once "user" current-user "is_following"
-;;                   (fn [is-following username]
-;;                     (when (and (= is-following true) (not= username current-user))
-;;                       (let [icon-cid (profile/getIconCID username)]
-;;                         (when (not (nil? icon-cid))
-;;                           (swap! following-list conj {:username username
-;;                                                       :icon_cid icon-cid}))))))
-;;     @following-list))
 (defn get-following-list []
   (let [following-map (r/atom {})
         current-user (js/sessionStorage.getItem "username")]
