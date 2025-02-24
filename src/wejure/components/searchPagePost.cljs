@@ -14,12 +14,6 @@
 
 (def post-result-list (r/atom []))
 
-(defn vector-append [target-atom value]
-  (swap! target-atom conj value))
-
-(defn vector-prepend [target-atom value]
-  (reset! target-atom (into (vector value) @target-atom)))
-
 (defn search-post [post-search]
   (js/console.log "Post search:" post-search)
   (reset! post-result-list [])
@@ -33,7 +27,7 @@
                                         (do (println "post found" post-data)
                                          (swap! post-result-list conj post-data))
                                         (js/console.log "Post not found")))))))))
-;;def ipfs-url "https://ipfs.io/ipfs/")
+
 (def ipfs-url "http://localhost:8080/ipfs/")
 
 (defn search-page-post [{{:keys [search-input]} :path-params}]
@@ -66,5 +60,3 @@
            [box {:sx {:display "flex" :justifyContent "center"}}
             [:img {:src (str ipfs-url (get result :image))
                    :style {:maxWidth "100%" :maxHeight 400}}]])]))]])
-
-;; 加一个点头像能redirect到用户profile的功能

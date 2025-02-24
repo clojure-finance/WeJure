@@ -33,15 +33,15 @@ export function login(name, password) {                             // function 
 export function register(name, password, cid) {
     var hashedPassword = hashPassword(password);
     
-    // First, check if the username already exists
+    // check if the username already exists
     gun.get("user").get(name).once((data) => {
         if (data) {
-            // User already exists
+            // already exists
             wejure.components.registrationPage.stopLoading();
             alert("Username already exists. Please choose a different username.");
-            location.reload(); // Refresh the page
+            location.reload();
         } else {
-            // Username doesn't exist, proceed with registration
+            // doesn't exist, proceed with registration
             user.create(name, hashedPassword, ({ err }) => {
                 if (err) {
                     wejure.components.registrationPage.stopLoading();
@@ -49,9 +49,7 @@ export function register(name, password, cid) {
                 } else {
                     userInfo = {"icon_cid": cid, "bio": "", "is_following": {[name]: true}};
                     gun.get("user").get(name).put(userInfo);
-                    // (gun/put "user" username "is_following" username true)
                     gun.get("user").get(name).get("is_following").get(name).put(true);
-                    // alert("Account created successfully");
                     wejure.components.registrationPage.stopLoading();
                     wejure.components.registrationPage.toLoginPage();
                 }
