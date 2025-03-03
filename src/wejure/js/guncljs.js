@@ -28,12 +28,11 @@ function saveNodes(nodes) {
   localStorage.setItem(NODES_STORAGE_KEY, JSON.stringify(nodes));
 }
 
-// 清理超过一个月未使用的节点
-function cleanExpiredNodes(nodes) {
-  const now = getCurrentTimestamp();
-  const expirationTime = NODE_EXPIRATION_DAYS * 24 * 60 * 60 * 1000; // 毫秒
-  return nodes.filter((node) => now - node.lastUsed <= expirationTime);
-}
+// function cleanExpiredNodes(nodes) {
+//   const now = getCurrentTimestamp();
+//   const expirationTime = NODE_EXPIRATION_DAYS * 24 * 60 * 60 * 1000; // 毫秒
+//   return nodes.filter((node) => now - node.lastUsed <= expirationTime);
+// }
 
 // 初始化节点列表
 let storedNodes = loadStoredNodes();
@@ -54,8 +53,7 @@ let knownNodes = Array.from(
   ).values()
 );
 
-// 清理过期节点
-knownNodes = cleanExpiredNodes(knownNodes);
+// knownNodes = cleanExpiredNodes(knownNodes);
 saveNodes(knownNodes);
 
 // 初始化 GUN 实例
@@ -77,19 +75,18 @@ gun.on("hi", (peer) => {
     knownNodes.push({ url: peer.url, lastUsed: now });
   }
 
-  saveNodes(knownNodes); // 保存更新后的节点列表
+  saveNodes(knownNodes);
 });
 
 // 监听节点断开（可选）
 gun.on("bye", (peer) => {
   console.log("Disconnected from peer:", peer.url);
-  // 不需要更新时间戳，仅记录日志
 });
 
-// 心跳检查（可选，用于保证节点健康）
 async function heartbeatCheck() {
   console.log("Performing heartbeat check...");
   const updatedNodes = [];
+  knownNodes = loadStoredNodes();
   for (const node of knownNodes) {
     try {
       const response = await fetch(node.url, { method: "HEAD", timeout: 5000 });
@@ -99,19 +96,18 @@ async function heartbeatCheck() {
         updatedNodes.push({ ...node, lastUsed: getCurrentTimestamp() });
       } else {
         console.warn(`Node responded but not OK: ${node.url}`);
+        updatedNodes.push(node);
       }
     } catch (error) {
       console.warn(`Node is unreachable: ${node.url}`, error);
+      updatedNodes.push(node);
     }
   }
-
-  // 更新可用节点列表
   knownNodes = updatedNodes;
   saveNodes(knownNodes);
   gun.opt({ peers: updatedNodes.map((node) => node.url) });
 }
 
-// 定期执行心跳检查
 setInterval(heartbeatCheck, 60000);
 
 export function put() {                                         // n parameters (index from 0 to n-1)
