@@ -40,7 +40,7 @@ let storedNodes = loadStoredNodes();
 // 默认的初始节点
 const defaultPeers = [
   "http://localhost:8001/gun",
-  "https://wejure-hku-13af49c560e0.herokuapp.com/gun"
+  "https://wejure-hku-13af49c560e0.herokuapp.com/gun",
 ];
 
 // 将默认节点和已知节点合并
@@ -59,6 +59,15 @@ saveNodes(knownNodes);
 // 初始化 GUN 实例
 var gun = GUN({
   peers: knownNodes.map((node) => node.url),
+  rtc: {
+    room: 'wejure-hku', // 房间名称
+    iceServers: [
+      { urls: 'stun:stun.l.google.com:19302' },
+      { urls: 'stun:stun.cloudflare.com:3478' }
+    ],
+    dataChannel: { ordered: false, maxRetransmits: 2 }, // 数据通道配置
+    max: 10 // 最大连接数
+  }
 });
 
 // 监听节点连接并更新使用时间
