@@ -9,8 +9,7 @@
             [reagent-mui.icons.add-a-photo-sharp :refer [add-a-photo-sharp]]
             ["../js/account" :as acc]
             [reitit.frontend.easy :as reitit-fe]
-            [cljs-ipfs-api.core :as icore :refer [init-ipfs]]
-            [cljs-ipfs-api.files :as ifiles]))
+            [cljs-ipfs-api.core :as icore :refer [init-ipfs]]))
 
 (defn input-length-at-least [field min]                                    ;; check if the length of the input is at least min
     (>= (count @field) min))
@@ -37,26 +36,84 @@
 (defn ^:export stopLoading []
   (reset! @loading-ref false))  ;; bug? should be (reset! loading-ref false), but it works
 
-(defn submitProfile [name password photo loading] 
+(defn submitProfile [name password photo loading]
   (reset! loading-ref loading)
   (reset! loading true)
-  
-  (println "Creating blob...")
-  (let [blob (js/Blob. (clj->js [@photo]) #js {:type "image/*"})]
-    (println "Blob created:" blob)
-    
+
+  (println "Creating form data...")
+  (let [form-data (js/FormData.)]
+    (.append form-data "file" @photo (.-name @photo))
+
     (println "Uploading to IPFS...")
-    (ifiles/add blob {:path (.-name @photo)}
-                (fn [err files]
-                  (if err
-                    (do
-                      (println "Error uploading to IPFS:" err)
-                      (reset! loading false))
-                    (let [cid (. (. js/JSON parse files) -Hash)]
-                      (println "Uploaded to IPFS. CID:" cid)
-                      (println "Registering user account...")
-                      (acc/register @name @password cid)
-                      (println "User account registered.")))))))
+    (-> (js/fetch "http://127.0.0.1:5001/api/v0/add"
+                  #js {:method "POST"
+                       :body form-data})
+        (.then (fn [response] (.json response)))
+        (.then (fn [data]
+                 (let [cid (.-Hash data)]
+                   (println "Uploaded to IPFS. CID:" cid)
+                   (println "Registering user account...")
+                   (acc/register @name @password cid)
+                   (println "User account registered."))))
+        (.catch (fn [err]
+                  (println "Error uploading to IPFS:" err)
+                  (reset! loading false)))
+        (.finally (fn []
+                    (reset! loading false))))))
+
+;; (defn submitProfile [name password photo loading]
+;;    (reset! loading-ref loading)
+;;    (reset! loading true)
+
+;;    (println "Uploading to IPFS...")
+;;    (ifiles/add @photo
+;;                (fn [err files]
+;;                  (if err
+;;                    (do
+;;                      (println "Error uploading to IPFS:" err)
+;;                      (reset! loading false))
+;;                    (let [cid (get-in files [0 :hash])] ;; files 是一个数组，取第一个文件的 hash
+;;                      (println "Uploaded to IPFS. CID:" cid)
+;;                      (println "Registering user account...")
+;;                      (acc/register @name @password cid)
+;;                      (println "User account registered.")
+;;                      (reset! loading false))))))
+
+;; (defn submitProfile [name password photo loading]
+;;   (reset! loading-ref loading)
+;;   (reset! loading true)
+
+;;   (println "Uploading to IPFS...")
+
+;;   ;; 使用 FormData 构造多部分表单数据
+;;   (let [form-data (js/FormData.)]
+;;     (.append form-data "file" @photo) ;; 添加文件到表单
+;;     (let [response-promise (js/fetch "http://127.0.0.1:5001/api/v0/add"
+;;                                      (clj->js {:method "POST"
+;;                                                :body form-data}))]
+;;       (println "Response promise:" response-promise)
+;;       (.then response-promise
+;;              (fn [response]
+;;                (if (.ok response)
+;;                  (do
+;;                    (println "Response OK, parsing JSON...")
+;;                    (.then (.json response)
+;;                           (fn [data]
+;;                             (let [cid (get data "Hash")]
+;;                               (println "Uploaded to IPFS. CID:" cid)
+;;                               ;; 调用注册逻辑
+;;                               (println "Registering user account...")
+;;                               (acc/register @name @password cid)
+;;                               (println "User account registered.")
+;;                               (reset! loading false)))))
+;;                  (do
+;;                    (println "HTTP error:" (.status response))
+;;                    (reset! loading false)))))
+;;       ;; 捕获错误
+;;       (.catch response-promise
+;;               (fn [err]
+;;                 (println "Error uploading to IPFS:" err)
+;;                 (reset! loading false))))))
 
 (defn registration-page []
   (let [name (r/atom nil) password (r/atom nil) password-confirm (r/atom nil) profile-pic (r/atom nil) loading (r/atom false)]
@@ -185,7 +242,4 @@
              {:style {:position "absolute"
                       :bottom "20px"
                       :left "20px"}}
-             [text-field
-              {:variant "filled"
-               :default-value "zjyTesting"
-               :input-props {:read-only true}}]]]])))
+             ]]])))

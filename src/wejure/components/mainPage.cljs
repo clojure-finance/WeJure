@@ -1,7 +1,7 @@
 (ns wejure.components.mainPage
   (:require ["../js/guncljs" :as gun]
             ["../js/profile" :as profile]
-            ["../js/post" :as post]
+            ;; ["../js/post" :as post]
             [cljs-ipfs-api.core :as icore :refer [init-ipfs]]
             [cljs-ipfs-api.files :as ifiles]
             clojure.walk
@@ -26,13 +26,6 @@
 
 (def image-input (r/atom nil))
 
-(defn clear-gun-db []
-  (let [confirmation (js/confirm "Are you sure you want to clear all data in GunDB? This action cannot be undone.")]
-    (when confirmation
-      (gun/clear)
-      (js/alert "GunDB data has been cleared.")
-      ;; (js/window.location.reload)
-      )))
 
 ;; function for storing the post made by the user in gunDB 
 (defn store-post [username text image-cid]
@@ -44,7 +37,7 @@
 (defn load-post []
   (println "current time" (.getTime (new js/Date.)))
   (gun/map-once "user" (js/sessionStorage.getItem "username") "is_following"
-                (fn [label username]
+                (fn [_ username]
                   (when username
                     (gun/map-once "post" username (fn [post time-key]
                                                     (when (not= post nil)
@@ -149,13 +142,6 @@
                :on-click #(submit-post text-input image-input loading)}
               "Post"]]]]]
          
-         [box {:sx {:display "flex" :justify-content "center"}}
-          [button
-           {:variant "contained"
-            :color "secondary"
-            :sx {:my 2}
-            :on-click clear-gun-db}
-           "Clear GunDB"]]
 
          [box {:sx {:display "flex" :flex-direction "column" :align-items "center"}}
           (for [post (vals (into (sorted-map-by >) @post-list))]
