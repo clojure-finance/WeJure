@@ -1,4 +1,5 @@
 import { gun } from './db';
+import * as records from './records';
 
 // A user's posts live in the top-level node "post/<username>" (one node, not
 // post -> username), keyed by the post's UTC timestamp string.
@@ -7,15 +8,8 @@ function postsOf(username) {
 }
 
 export function storePost(username, text, imageCID) {
-    const now = new Date();
-    const post = {
-        username: username,
-        timestamp: now.toUTCString(),
-        text: text ?? null,
-        image: imageCID ?? null,
-        unixtime: now.getTime()
-    };
-    postsOf(username).get(post.timestamp).put(post);
+    const post = records.post(username, new Date(), text, imageCID);
+    postsOf(username).get(records.timestampOf(post)).put(post);
 }
 
 export function deletePost(username, key) {
@@ -42,7 +36,8 @@ export function searchPosts(query, onPost) {
     gun.get("user").map().once((info, username) => {
         if (!info) return;
         loadPosts(username, (post, key) => {
-            if (post.text && post.text.toLowerCase().includes(needle)) onPost(post, key);
+            const text = records.textOf(post);
+            if (text && text.toLowerCase().includes(needle)) onPost(post, key);
         });
     });
 }

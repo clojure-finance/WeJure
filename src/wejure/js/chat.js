@@ -1,5 +1,6 @@
 import CryptoJS from 'crypto-js';
 import { gun, SEA } from './db';
+import * as records from './records';
 
 function currentUser() {
     return sessionStorage.getItem("username");
@@ -43,11 +44,7 @@ export function init(username, onContacts) {
         const ids = new Set([...followees, ...lastMessageTime.keys()]);
         onContacts([...ids]
             .filter((id) => id !== username && !blocked.has(id))
-            .map((id) => ({
-                id: id,
-                avatar: avatars.get(id) || null,
-                last_message_time: lastMessageTime.get(id) || 0
-            })));
+            .map((id) => records.contact(id, avatars.get(id) || null, lastMessageTime.get(id) || 0)));
     };
 
     const fetchAvatar = (id) => {
@@ -72,10 +69,11 @@ export function init(username, onContacts) {
         }
         publish();
     });
-    self.get("chat_list").get("chat").map().on((record) => {
-        if (!record || !record.peer) return;
-        lastMessageTime.set(record.peer, Math.max(lastMessageTime.get(record.peer) || 0, record.last_message_time || 0));
-        fetchAvatar(record.peer);
+    self.get("chat_list").get("chat").map().on((entry) => {
+        const peer = entry && records.peerOf(entry);
+        if (!peer) return;
+        lastMessageTime.set(peer, Math.max(lastMessageTime.get(peer) || 0, records.lastMessageTimeOf(entry) || 0));
+        fetchAvatar(peer);
         publish();
     });
 
@@ -112,13 +110,13 @@ export async function storeMessage(recipient, content) {
 
     const secret = await SEA.secret(recipientEPub, currentPair());
     const timeKey = Date.now();
-    const message = { timestamp: new Date(timeKey).toUTCString(), sender: sender, content: content };
+    const message = records.message(sender, timeKey, content);
     const roomID = chatRoomID(sender, recipient);
     gun.get("chat").get(roomID).get(String(timeKey)).put(await SEA.encrypt(message, secret));
 
     // chat_list records let both sides list the conversation as a contact.
-    gun.get("user").get(sender).get("chat_list").get("chat").get(roomID).put({ peer: recipient, last_message_time: timeKey });
-    gun.get("user").get(recipient).get("chat_list").get("chat").get(roomID).put({ peer: sender, last_message_time: timeKey });
+    gun.get("user").get(sender).get("chat_list").get("chat").get(roomID).put(records.chatListEntry(recipient, timeKey));
+    gun.get("user").get(recipient).get("chat_list").get("chat").get(roomID).put(records.chatListEntry(sender, timeKey));
     return null;
 }
 
@@ -197,12 +195,7 @@ async function getGroupKey(groupID, layer) {
 export async function createGroup(groupName, members) {
     const creator = currentUser();
     const groupID = CryptoJS.SHA256(Date.now() + creator + Math.random()).toString(CryptoJS.enc.Hex);
-    groupNode(groupID).put({
-        group_name: groupName,
-        creator: creator,
-        created: new Date().toUTCString(),
-        totallayer: 0
-    });
+    groupNode(groupID).put(records.group(groupName, creator, new Date()));
     await startLayer(groupID, [creator, ...members]);
     await storeGroupMessage(groupID, "Welcome to the group!");
     return groupID;
@@ -231,10 +224,10 @@ export async function storeGroupMessage(groupID, content) {
     const layerKey = await getGroupKey(groupID, layer);
     if (!layerKey) return "You are not a member of this group.";
     const timeKey = Date.now();
-    const message = { timestamp: new Date(timeKey).toUTCString(), sender: currentUser(), content: content };
+    const message = records.message(currentUser(), timeKey, content);
     gun.get("groupChat").get(groupID).get(String(layer)).get(String(timeKey)).put(await SEA.encrypt(message, layerKey));
     for (const member of await getMembers(groupID, layer)) {
-        gun.get("user").get(member).get("chat_list").get("group").get(groupID).put({ last_message_time: timeKey });
+        gun.get("user").get(member).get("chat_list").get("group").get(groupID).put(records.groupChatListEntry(timeKey));
     }
     return null;
 }

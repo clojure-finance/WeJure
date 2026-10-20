@@ -1,5 +1,6 @@
 import CryptoJS from 'crypto-js';
 import { gun, user } from './db';
+import * as records from './records';
 
 // Existing accounts were created with SHA-256-hashed passwords, so keep hashing.
 function hashPassword(password) {
@@ -33,7 +34,7 @@ export function register(name, password, iconCID, onDone) {
                 onDone(err);
                 return;
             }
-            gun.get("user").get(name).put({ icon_cid: iconCID, bio: "" });
+            gun.get("user").get(name).put(records.userProfile(iconCID, ""));
             gun.get("user").get(name).get("is_following").get(name).put(true);   // own posts appear in the feed
             onDone(null);
         });
