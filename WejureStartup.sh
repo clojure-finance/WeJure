@@ -1,32 +1,26 @@
 #!/bin/bash
+# One-time setup on macOS: Homebrew, Node.js, Yarn, IPFS (Kubo), and the npm dependencies.
+cd "$(dirname "$0")"
 
-# check if Homebrew is installed
+# install Homebrew if missing
 if ! command -v brew &> /dev/null
 then
     /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-    # Add Homebrew to PATH
-    echo 'export PATH="/opt/homebrew/bin:$PATH"' >> ~/.bash_profile 
-    source ~/.bash_profile
-    echo 'export PATH="/opt/homebrew/bin:$PATH"' >> ~/.zshrc  
-    source ~/.zshrc
+    BREW=/opt/homebrew/bin/brew                     # Apple silicon
+    [ -x "$BREW" ] || BREW=/usr/local/bin/brew      # Intel
+    echo "eval \"\$($BREW shellenv)\"" >> ~/.zprofile
+    eval "$($BREW shellenv)"
 fi
 
-# install Node.js and Yarn
-brew install node yarn
+# install Node.js, Yarn and IPFS
+brew install node yarn ipfs
 
-# install IPFS
-brew install ipfs
-
-# initialize IPFS
+# initialize IPFS and allow the WeJure page to call its API
 ipfs init
-
-# set up IPFS config
-ipfs config --json API.HTTPHeaders.Access-Control-Allow-Origin "[\"http://localhost:8020\", \"http://localhost:5001\", \"https://webui.ipfs.io\"]"
+ipfs config --json API.HTTPHeaders.Access-Control-Allow-Origin '["http://localhost:8020", "http://localhost:5001", "https://webui.ipfs.io"]'
 ipfs config --json API.HTTPHeaders.Access-Control-Allow-Methods '["PUT", "POST"]'
 
-# dependencies installation
+# install the npm dependencies
 yarn install
-
-npm install crypto-js
 
 echo "WeJure is well set up. Enjoy!"

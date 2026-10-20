@@ -1,35 +1,33 @@
 #!/bin/bash
+# One-time setup on Linux: Node.js (via nvm), Yarn, IPFS (Kubo), and the npm dependencies.
+cd "$(dirname "$0")"
+KUBO_VERSION=v0.30.0
 
-# 安装 nvm (Node 版本管理器)
+# install nvm and load it into this shell
 curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.0/install.sh | bash
+export NVM_DIR="$HOME/.nvm"
+. "$NVM_DIR/nvm.sh"
 
-# 重新加载 .bashrc 文件，使 nvm 命令生效
-source ~/.bashrc
-
-# 使用 nvm 安装 Node.js v20.18.0
-nvm install 20.18.0
-
-# 将 Node.js v20.18.0 设置为默认版本
-nvm alias default 20.18.0
-
-# 验证 Node.js 和 npm 版本
+# install Node.js 20 and make it the default
+nvm install 20
+nvm alias default 20
 node -v
-npm -v
 
-# 启用 Corepack
+# enable Yarn through Corepack (the version is pinned in package.json)
 corepack enable
 
-# 安装 IPFS
-npm install -g ipfs
+# install IPFS (Kubo)
+curl -fsSL -o /tmp/kubo.tar.gz "https://dist.ipfs.tech/kubo/$KUBO_VERSION/kubo_${KUBO_VERSION}_linux-amd64.tar.gz"
+tar -xzf /tmp/kubo.tar.gz -C /tmp
+sudo bash /tmp/kubo/install.sh
+ipfs --version
 
-# 初始化 IPFS
+# initialize IPFS and allow the WeJure page to call its API
 ipfs init
+ipfs config --json API.HTTPHeaders.Access-Control-Allow-Origin '["http://localhost:8020", "http://localhost:5001", "https://webui.ipfs.io"]'
+ipfs config --json API.HTTPHeaders.Access-Control-Allow-Methods '["PUT", "POST"]'
 
-# 配置 IPFS API 跨域访问
-ipfs config --json API.HTTPHeaders.Access-Control-Allow-Origin "[\"http://localhost:8020\", \"http://localhost:5001\", \"https://webui.ipfs.io\"]"
-
-# 安装依赖
-npm install 
-npm install crypto-js
+# install the npm dependencies
+yarn install
 
 echo "WeJure environment has been set up on Linux. Enjoy!"
