@@ -1,12 +1,12 @@
 (ns wejure.components.loginPage
   (:require ["../js/account" :as acc]
+            ["@mui/material/Box$default" :as Box]
+            ["@mui/material/Button$default" :as Button]
+            ["@mui/material/CircularProgress$default" :as CircularProgress]
+            ["@mui/material/Typography$default" :as Typography]
+            [reagent.core :as r]
             [reitit.frontend.easy :as reitit-fe]
-            [reagent-mui.material.box :refer [box]]
-            [reagent-mui.material.button :refer [button]]
-            [reagent-mui.material.circular-progress :refer [circular-progress]]
-            [reagent-mui.material.text-field :refer [text-field]]
-            [reagent-mui.material.typography :refer [typography]]
-            [reagent.core :as r]))
+            [wejure.components.textField :refer [text-field]]))
 
 (defn- authenticate [name password loading]
   (reset! loading true)
@@ -22,7 +22,7 @@
     (fn []
       [:div
        {:style {:height "100%" :display "flex" :justify-content "center" :align-items "center"}}
-       [box
+       [:> Box
         {:sx {:height "300px"
               :width "350px"
               :background-color "#FFFEF7"
@@ -34,7 +34,7 @@
          :component "form"
          :on-submit (fn [e] (.preventDefault e) (authenticate name password loading))}
 
-        [typography
+        [:> Typography
          {:variant "h5"
           :component "div"}
          "Login your WeJure account"]
@@ -43,7 +43,7 @@
          {:style {:display "flex"
                   :flex-direction "column"}}
 
-         [typography
+         [:> Typography
           {:variant "h6"
            :component "div"}
           "1. Enter your username"]
@@ -54,13 +54,13 @@
            :on-change (fn [e] (reset! name (.. e -target -value)))
            :error (empty? @name)
            :helper-text (if (empty? @name) "Please enter your username" " ")
-           :input-props {:max-length 20}}]]
+           :slot-props {:html-input {:max-length 20}}}]]
 
         [:div
          {:style {:display "flex"
                   :flex-direction "column"}}
 
-         [typography
+         [:> Typography
           {:variant "h6"
            :component "div"}
           "2. Enter your password"]
@@ -72,16 +72,16 @@
            :on-change (fn [e] (reset! password (.. e -target -value)))
            :error (empty? @password)
            :helper-text (if (empty? @password) "Please enter your password" " ")
-           :input-props {:max-length 20}}]]
+           :slot-props {:html-input {:max-length 20}}}]]
 
         [:div
          {:style {:display "flex"
                   :flex-direction "column"
                   :align-items "center"}}
-         [button
+         [:> Button
           {:variant "contained"
            :type "submit"
            :disable-elevation true
            :disabled (or (empty? @name) (empty? @password) @loading)}
           "Submit"]
-         [circular-progress {:sx {:margin "10px" :visibility (when (not @loading) "hidden")}}]]]])))
+         [:> CircularProgress {:sx {:margin "10px" :visibility (when (not @loading) "hidden")}}]]]])))

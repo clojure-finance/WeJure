@@ -1,6 +1,6 @@
 (ns wejure.core
   (:require [reagent.core :as r]
-            [reagent.dom :as rdom]
+            [reagent.dom.client :as rdomc]
             [reitit.frontend :as reitit-f]
             [reitit.frontend.easy :as reitit-fe]
             [wejure.common :as common]
@@ -52,11 +52,12 @@
 (defn stop []
   (js/console.log "Stopping..."))
 
+(defonce root (rdomc/create-root (.getElementById js/document "app")))
+
 (defn start []
   (js/console.log "Starting...")
   (router-start)
-  (rdom/render [app]
-               (.getElementById js/document "app")))
+  (rdomc/render root [app]))
 
 (defn ^:export init []
   (start))

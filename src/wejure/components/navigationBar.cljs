@@ -1,24 +1,24 @@
 (ns wejure.components.navigationBar
   (:require ["../js/account" :as acc]
+            ["@mui/material/AppBar$default" :as AppBar]
+            ["@mui/material/Avatar$default" :as Avatar]
+            ["@mui/material/Button$default" :as Button]
+            ["@mui/material/Toolbar$default" :as Toolbar]
+            ["@mui/material/Typography$default" :as Typography]
             [reagent.core :as r]
-            [reagent-mui.material.app-bar :refer [app-bar]]
-            [reagent-mui.material.avatar :refer [avatar]]
-            [reagent-mui.material.button :refer [button]]
-            [reagent-mui.material.text-field :refer [text-field]]
-            [reagent-mui.material.toolbar :refer [toolbar]]
-            [reagent-mui.material.typography :refer [typography]]
             [reitit.frontend.easy :as reitit-fe]
-            [wejure.common :as common]))
+            [wejure.common :as common]
+            [wejure.components.textField :refer [text-field]]))
 
 (defn- logout []
   (acc/logout)
   (set! js/window.location.href (reitit-fe/href :wejure.core/title)))
 
 (defn- bar [& children]
-  [app-bar
+  [:> AppBar
    {:position "static"
     :sx {:background-color "#070707"}}
-   (into [toolbar] children)])
+   (into [:> Toolbar] children)])
 
 (defn- logo []
   [:img
@@ -34,11 +34,11 @@
    [logo]
    spacer
    [:div
-    [button
+    [:> Button
      {:color "inherit"
       :href (reitit-fe/href :wejure.core/register)}
      "Sign Up"]
-    [button
+    [:> Button
      {:color "inherit"
       :href (reitit-fe/href :wejure.core/login)}
      "Login"]]])
@@ -47,7 +47,7 @@
   [bar
    [logo]
    spacer
-   [button
+   [:> Button
     {:color "inherit"
      :variant "outlined"
      :href (reitit-fe/href :wejure.core/title)}
@@ -59,7 +59,7 @@
 
 (defn- search-box []
   [:<>
-   [button                                                                 ;; switch between searching users and posts
+   [:> Button                                                              ;; switch between searching users and posts
     {:color "inherit"
      :variant (if (= @search-mode :user) "contained" "outlined")
      :on-click #(swap! search-mode {:user :post, :post :user})}
@@ -90,28 +90,28 @@
                :align-items "center"
                :margin "0 2px 0 0"}}
       [search-box]
-      [typography
+      [:> Typography
        {:variant "h6"
         :component "div"
         :sx {:font-size "12px" :margin "0 20px 0 0"}}
        username]
       [:a {:href (reitit-fe/href :wejure.core/user {:username username})}
-       [avatar {:sx {:width 50 :height 50}
-                :src (common/ipfs-url (js/sessionStorage.getItem "icon_cid"))}]]
+       [:> Avatar {:sx {:width 50 :height 50}
+                   :src (common/ipfs-url (js/sessionStorage.getItem "icon_cid"))}]]
       (if (= page :chat)
-        [button
+        [:> Button
          {:color "inherit"
           :variant "outlined"
           :sx {:mx 2}
           :href (reitit-fe/href :wejure.core/home)}
          "Main Page"]
-        [button
+        [:> Button
          {:color "inherit"
           :variant "outlined"
           :sx {:mx 2}
           :href (reitit-fe/href :wejure.core/chat)}
          "Message"])
-      [button
+      [:> Button
        {:color "inherit"
         :variant "outlined"
         :on-click logout}

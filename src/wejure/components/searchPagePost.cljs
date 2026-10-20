@@ -1,7 +1,7 @@
 (ns wejure.components.searchPagePost
   (:require ["../js/post" :as post]
-            [reagent-mui.material.paper :refer [paper]]
-            [reagent-mui.material.typography :refer [typography]]
+            ["@mui/material/Paper$default" :as Paper]
+            ["@mui/material/Typography$default" :as Typography]
             [reagent.core :as r]
             [wejure.components.postCard :refer [add-post! post-list]]))
 
@@ -11,12 +11,12 @@
     (fn [{{:keys [search-input]} :path-params}]
       [:div
        {:style {:margin "25px 10% 25px 10%"}}
-       [typography
+       [:> Typography
         {:variant "h5"
          :component "div"
          :gutter-bottom true}
         "Search results for: " search-input]
        (if (empty? @posts)
-         [paper {:variant "outlined" :sx {:p 2 :mb 2}}
-          [typography {:align "center"} "No results found."]]
+         [:> Paper {:variant "outlined" :sx {:p 2 :mb 2}}
+          [:> Typography {:align "center"} "No results found."]]
          [post-list posts])])))
