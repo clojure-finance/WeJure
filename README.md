@@ -92,13 +92,15 @@ GunDB paths (`a/b` means `gun.get("a").get("b")`, except `post/<username>`, whic
 | `groupKeys/<groupID>/<layer>/<username>` | the layer key, encrypted for that member |
 | `groupChat/<groupID>/<layer>/<time ms>` | encrypted `{timestamp, sender, content}` |
 
+The record fields above are built and read only in `src/wejure/js/records.js`. Release builds compile `src/wejure/js/` with Closure's advanced optimizations, which rename unquoted property names; `records.js` writes every field with a quoted key, so they keep these names. Add new fields there, not as object literals or dot access in the other modules.
+
 The browser keeps the session in `sessionStorage`: `username`, `icon_cid` and the SEA key pair `pair`.
 
 ## Code layout
 - `src/wejure/core.cljs`: routes, and redirects between logged-in and logged-out pages
 - `src/wejure/common.cljs`: session and IPFS helpers
 - `src/wejure/components/`: one namespace per page, plus the navigation bar and `postCard.cljs`, the post list shared by the feed, profile and post-search pages
-- `src/wejure/js/`: the GunDB layer, called from ClojureScript with callbacks or promises: `db.js` (the shared GunDB instance), `account.js`, `profile.js`, `post.js`, `chat.js`; and `relay.js`, the relay server
+- `src/wejure/js/`: the GunDB layer, called from ClojureScript with callbacks or promises: `db.js` (the shared GunDB instance), `records.js` (the stored record formats), `account.js`, `profile.js`, `post.js`, `chat.js`; and `relay.js`, the relay server
 
 ## Deleting all data
 1. Clear the site data (local storage) in every browser that opened WeJure.

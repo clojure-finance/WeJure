@@ -1,10 +1,11 @@
 import { gun } from './db';
+import * as records from './records';
 
 // onResult({username, icon_cid}, exactMatch) is called once per matching user.
 export function searchUser(query, onResult) {
     gun.get("user").map().once((info, username) => {
         if (info && username.includes(query)) {
-            onResult({ username: username, icon_cid: info.icon_cid }, username === query);
+            onResult(records.userSearchResult(username, records.iconCIDOf(info)), username === query);
         }
     });
 }
