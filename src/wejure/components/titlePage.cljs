@@ -9,7 +9,7 @@
             :align-items "center"
             :justify-content "center"}}
    [:img
-    {:src "logo_black.png"
+    {:src "/logo_black.png"
      :style {:height "300px"
              :width "300px"
              :flex "0 1 auto"}}]

@@ -50,8 +50,7 @@ Write-Host "configuring IPFS API CORS..."
 ipfs config --json API.HTTPHeaders.Access-Control-Allow-Origin '["http://localhost:8020", "http://localhost:5001", "https://webui.ipfs.io"]'
 ipfs config --json API.HTTPHeaders.Access-Control-Allow-Methods '["PUT", "POST"]'
 
-# start IPFS daemon
-Write-Host "starting IPFS daemon..."
+# download and install Node.js
 $NodeJS_URL = "https://nodejs.org/dist/v18.18.1/node-v18.18.1-x64.msi"
 $NodeJS_Installer = "node-v18.18.1-x64.msi"
 Invoke-WebRequest -Uri $NodeJS_URL -OutFile $NodeJS_Installer
@@ -87,12 +86,8 @@ if ($LASTEXITCODE -ne 0) {
     exit 1
 }
 
-# install WeJure
+# install the npm dependencies
 Write-Host "installing WeJure..."
 yarn install
-
-# test WeJure installation
-Write-Host "crypt-js installation..."
-npm install crypto-js
 
 Write-Host "WeJure installation completed!"
