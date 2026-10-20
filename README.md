@@ -1,99 +1,110 @@
 # WeJure: A Decentralized Social Network
 
+WeJure is a peer-to-peer social network written in ClojureScript. Data lives in
+[GunDB](https://gun.eco/), a decentralized graph database that syncs between
+browsers through relay servers; images live on [IPFS](https://ipfs.tech/).
+Accounts, signatures and end-to-end encryption use SEA, GunDB's cryptography layer.
+
 ## Features
-- Runs on a peer-to-peer network
-- Secured and immutable data
-- Transparency of data usage and source code
-- **Group chat functionality**:
-    - Invite users to your group.
-    - Group creators can remove members.
-    - Layered encryption ensures message history privacy:
-        - New members cannot access messages sent before they joined.
-        - Removed members can only access messages from the period they were part of the group. Users can only access group messages pertinent to their duration of membership.
+- Accounts with a profile picture and a bio
+- Posts with text and/or an image; a feed of the people you follow; deleting your own posts
+- Following and unfollowing users
+- Searching users by name and posts by text
+- End-to-end encrypted direct messages, and blocking users
+- Group chat with layered encryption (backend only, see [Status](#status))
 
-## Getting started
-WeJure is developed using [shadow-cljs](https://github.com/thheller/shadow-cljs) (which requires Node.js, Yarn, and a Java SDK).
-The following software are needed:
+## Requirements
+WeJure is built with [shadow-cljs](https://github.com/thheller/shadow-cljs), which needs:
 - [Node.js](https://nodejs.org/en)
-- [Yarn](https://yarnpkg.com/)
+- [Yarn](https://yarnpkg.com/) 1.x
 - [Java SDK (Adoptium)](https://adoptium.net/)
-- [InterPlanetary File System (IPFS)](https://ipfs.tech/)
 
-## Security and Encryption
-WeJure prioritizes the privacy and security of your communications. While GunDB stores data locally, the content of messages itself is not encrypted by GunDB by default. To address this, WeJure leverages the **SEA (Security, Encryption, Authorization) library**, which is GunDB's built-in cryptography layer, for robust end-to-end encryption of all messages.
+Running it also needs an [IPFS](https://ipfs.tech/) node ([Kubo](https://github.com/ipfs/kubo)).
 
-### Encryption Mechanisms in SEA
-SEA employs a combination of strong cryptographic methods:
--   **AES-GCM**: Used for symmetric encryption of message content.
--   **ECDH (Elliptic Curve Diffie-Hellman)**: Used for asymmetric key agreement, allowing users to securely establish shared secret keys.
+## First-time setup
+The setup scripts install the requirements, initialize IPFS and run `yarn install`.
 
-### Key Generation and Management
-
-**1. Direct Messages:**
-For one-on-one conversations, a shared secret key is generated between the two participants. This is typically achieved using a function like `SEA.secret(recipientEpub, senderKeyPair)`, where `recipientEpub` is the recipient's public key and `senderKeyPair` is the sender's public/private key pair. This ensures that only the sender and the recipient can decrypt the messages exchanged. An encrypted message would then be generated using a command similar to `let encryptedMessage = await SEA.encrypt(message, sharedKey);`.
-
-**2. Group Chats:**
-Group chat security introduces more complexity. In WeJure:
--   A unique group key is initialized for each group. This key generation incorporates multiple random variables to enhance security.
--   **Layered Encryption for Message History**: WeJure implements a layered encryption approach for group chats. This design has specific implications for message visibility when group membership changes:
-    -   When a new user is invited to a group, they will not be able to decrypt or access messages that were exchanged *before* they joined, even if they somehow acquire the group's historical encrypted data.
-    -   If a user is removed from a group, they will only be able to access the message history from the period they were an active member. They will not be able to access messages sent after their removal, nor can they decrypt new messages.
-    -   Essentially, users can only access group messages pertinent to their own duration of membership within the group. This is designed to protect the ongoing privacy and integrity of the group conversation even as its composition evolves.
-
-<!-- Before running WeJure, run `yarn` to download all the dependencies. -->
-
-<!-- To run or configure WeJure on your local environment, first navigate to `src/wejure/js` in terminal and run `node relay` to start a relay server for synchronizing data in gunDB. Next, run a local IPFS client to host IPFS. In the root directory, start a local server by the command `yarn dev`. Then visit [localhost:8020]. -->
-
-## Special notes
-- To delete all the gunDB data, clear the browser local storage in every browser that you used opened WeJure with. Then, delete the `radata` folder in `src/wejure/js`.
-
-## User guide
-Users will need to create an account or sign in from the top right corner of the main page. After logging in, users will be able to send messages to other users online. WeJure also supports **group chats** with features for inviting and managing members, and specific privacy controls for message history (as detailed in the Features and Security and Encryption sections).
-
-## Configuration
-### IPFS
-- The port for IPFS should be 5001. If not, you can correct the settings by running `ipfs config Addresses.API /ip4/127.0.0.1/tcp/5001` in terminal.
-
-## First-Time Setup
-**Mac OS**
+**macOS**
 ```bash
-chmod +x WejureStartup.sh  # Make script executable
-./WejureStartup.sh        # Install dependencies and setup
+./WejureStartup.sh
+```
+
+**Linux**
+```bash
+./setup_wejure_linux.sh
 ```
 
 **Windows**
 ```powershell
 Set-ExecutionPolicy RemoteSigned -Scope Process  # Allow script execution
-.\WeJureWinStart.ps1                             # Run in PowerShell
+.\WeJureWinStart.ps1
 ```
 
-## Running the Application
-
-**Mac OS**
+## Running
+**macOS and Linux**
 ```bash
-chmod +x WejureRun.sh  # Make script executable
 ./WejureRun.sh
 ```
+
 **Windows**
 ```powershell
-.\WeJureWinRun.ps1                           # Run in PowerShell
+.\WeJureWinRun.ps1
 ```
 
-After running, access the application at: http://localhost:8020
+Then visit http://localhost:8020.
 
-## Relay Server Deployment
-You can support the stability of WeJure by deploying your own relay server!
-The GunDB relay server implementation can be found in the gun-relay branch.
+The scripts start three processes, which can also be started by hand:
+1. the IPFS daemon: `ipfs daemon`
+2. the GunDB relay: `cd src/wejure/js && node relay`
+3. the shadow-cljs dev server: `yarn dev`
 
-## Development in process
-The current project is still under development. 
+For an optimized build, run `yarn release`; it writes `public/js/main.js`. Serve `public/` with unknown paths falling back to `index.html`, since the app routes with real URLs such as `/home`.
 
-**Delete all data**
-```bash
-chmod +x remove_local_gun.sh  # Make script executable
-./remove_local_gun.sh
-```
-This command line remove the data in the local gunDB storage for the convenience of development. You need to delete the data storage in the browser before execute this script to ensure correct removing.
+## Configuration
+- **IPFS**: the app uploads through the API on port 5001 and loads images from the gateway on port 8080 (both set in `src/wejure/common.cljs`). If the API listens elsewhere, run `ipfs config Addresses.API /ip4/127.0.0.1/tcp/5001`. The API must allow requests from the page, which the setup scripts configure:
+  ```bash
+  ipfs config --json API.HTTPHeaders.Access-Control-Allow-Origin '["http://localhost:8020", "http://localhost:5001", "https://webui.ipfs.io"]'
+  ipfs config --json API.HTTPHeaders.Access-Control-Allow-Methods '["PUT", "POST"]'
+  ```
+- **GunDB relay**: `src/wejure/js/relay.js` listens on 127.0.0.1:8001 (override with the `HOST` and `PORT` environment variables). Users only see each other's data when their browsers reach a common relay, so for more than one machine, run `relay.js` on a reachable host (for example `HOST=0.0.0.0 node relay`) and add its URL to `peers` in `src/wejure/js/db.js`.
 
-**UI for creating groups and for blacklist is under construction.**
-**Bugs exist for auto refreshing in chatpage**
+## Security and encryption
+- **Accounts**: GunDB SEA creates a key pair per user. Passwords are SHA-256-hashed before they reach SEA.
+- **Direct messages**: the sender and the recipient derive the same shared secret with ECDH (`SEA.secret(recipientEpub, senderPair)`), and each message is encrypted with AES-GCM (`SEA.encrypt(message, secret)`). Only the two participants can read it.
+- **Group chats**: every membership change starts a new *layer* with a fresh random key, which the group creator encrypts separately for each member of that layer. Members can decrypt exactly the layers they belonged to: new members cannot read messages from before they joined, and removed members cannot read messages sent after they left.
+- **Public data**: profiles, posts, follows, blocks and the list of who has chatted with whom are stored unencrypted.
+
+## Data model
+GunDB paths (`a/b` means `gun.get("a").get("b")`, except `post/<username>`, which is a single top-level node):
+
+| Path | Content |
+|------|---------|
+| `user/<username>` | `{icon_cid, bio}` |
+| `user/<username>/is_following/<username>` | `true` or `false` (users follow themselves, so their own posts appear in their feed) |
+| `user/<username>/blacklist/<username>` | `true` if blocked, `null` once unblocked |
+| `user/<username>/blockedBy/<username>` | mirror of the blacklist |
+| `user/<username>/chat_list/chat/<roomID>` | `{peer, last_message_time}` for each conversation |
+| `user/<username>/chat_list/group/<groupID>` | `{last_message_time}` for each group |
+| `post/<username>/<UTC timestamp>` | `{username, timestamp, text, image, unixtime}`; `image` is an IPFS CID |
+| `chat/<roomID>/<time ms>` | encrypted `{timestamp, sender, content}`; `roomID` is the SHA-256 of the two usernames, sorted and joined with `-` |
+| `groups/<groupID>` | `{group_name, creator, created, totallayer}` |
+| `groups/<groupID>/<layer>/members/<username>` | `true` |
+| `groupKeys/<groupID>/<layer>/<username>` | the layer key, encrypted for that member |
+| `groupChat/<groupID>/<layer>/<time ms>` | encrypted `{timestamp, sender, content}` |
+
+The browser keeps the session in `sessionStorage`: `username`, `icon_cid` and the SEA key pair `pair`.
+
+## Code layout
+- `src/wejure/core.cljs`: routes, and redirects between logged-in and logged-out pages
+- `src/wejure/common.cljs`: session and IPFS helpers
+- `src/wejure/components/`: one namespace per page, plus the navigation bar and `postCard.cljs`, the post list shared by the feed, profile and post-search pages
+- `src/wejure/js/`: the GunDB layer, called from ClojureScript with callbacks or promises: `db.js` (the shared GunDB instance), `account.js`, `profile.js`, `post.js`, `chat.js`; and `relay.js`, the relay server
+
+## Deleting all data
+1. Clear the site data (local storage) in every browser that opened WeJure.
+2. Stop the relay and run `./remove_local_gun.sh`, which deletes `src/wejure/js/radata`.
+
+## Status
+The project is still under development.
+- Group chat is implemented in `src/wejure/js/chat.js` (`createGroup`, `addMemberToGroup`, `removeMemberFromGroup`, `storeGroupMessage`, `displayGroupMessages`), but the chat page has no UI for groups yet.
+- Unblocking (`removeFromBlacklist` in `chat.js`) has no UI yet.
