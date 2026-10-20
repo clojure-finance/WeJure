@@ -1,5 +1,7 @@
 # build and tooling output
 public/js/
+test-results/
+playwright-report/
 node_modules
 .shadow-cljs/
 .clj-kondo/

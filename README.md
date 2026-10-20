@@ -100,7 +100,12 @@ The browser keeps the session in `sessionStorage`: `username`, `icon_cid` and th
 - `src/wejure/core.cljs`: routes, and redirects between logged-in and logged-out pages
 - `src/wejure/common.cljs`: session and IPFS helpers
 - `src/wejure/components/`: one namespace per page, plus the navigation bar and `postCard.cljs`, the post list shared by the feed, profile and post-search pages
+- `src/wejure/components/textField.cljs`: the MUI text field every page uses; it keeps the caret in place while typing
 - `src/wejure/js/`: the GunDB layer, called from ClojureScript with callbacks or promises: `db.js` (the shared GunDB instance), `records.js` (the stored record formats), `account.js`, `profile.js`, `post.js`, `chat.js`; and `relay.js`, the relay server
+- `test/e2e/`: the end-to-end test
+
+## Testing
+`yarn test:e2e` builds the release version and runs a browser test through every page with two users. Install its browser once with `npx playwright install chromium`. The test starts its own relay (with empty data), an IPFS stand-in and a web server, on the ports the app uses (8001, 5001 and 8080, 8020), so stop any IPFS daemon, relay or dev server first.
 
 ## Deleting all data
 1. Clear the site data (local storage) in every browser that opened WeJure.
