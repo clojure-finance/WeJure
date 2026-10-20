@@ -1,15 +1,15 @@
 (ns wejure.components.mainPage
   (:require ["../js/post" :as post]
-            [reagent-mui.icons.add-a-photo-sharp :refer [add-a-photo-sharp]]
-            [reagent-mui.material.box :refer [box]]
-            [reagent-mui.material.button :refer [button]]
-            [reagent-mui.material.circular-progress :refer [circular-progress]]
-            [reagent-mui.material.icon-button :refer [icon-button]]
-            [reagent-mui.material.text-field :refer [text-field]]
-            [reagent-mui.material.typography :refer [typography]]
+            ["@mui/icons-material/AddAPhotoSharp$default" :as AddAPhotoSharpIcon]
+            ["@mui/material/Box$default" :as Box]
+            ["@mui/material/Button$default" :as Button]
+            ["@mui/material/CircularProgress$default" :as CircularProgress]
+            ["@mui/material/IconButton$default" :as IconButton]
+            ["@mui/material/Typography$default" :as Typography]
             [reagent.core :as r]
             [wejure.common :as common]
-            [wejure.components.postCard :refer [add-post! post-list]]))
+            [wejure.components.postCard :refer [add-post! post-list]]
+            [wejure.components.textField :refer [text-field]]))
 
 ;; uploads the image (if any) to IPFS, then stores the post in gunDB
 (defn- submit-post [text image loading]
@@ -33,10 +33,10 @@
     (post/loadFeed (common/current-username) (add-post! posts))
     (fn []
       [:div
-       [box {:sx {:display "flex"                                                   ;; components for starting a new post
-                  :flex-direction "column"
-                  :align-items "center"}}
-        [box
+       [:> Box {:sx {:display "flex"                                                ;; components for starting a new post
+                     :flex-direction "column"
+                     :align-items "center"}}
+        [:> Box
          {:sx {:box-shadow "20"
                :background-color "white"
                :padding "30px"
@@ -52,11 +52,11 @@
             :value @text
             :on-change (fn [e] (reset! text (.. e -target -value)))}]]
 
-         [box
+         [:> Box
           {:sx {:display "flex"
                 :justify-content "space-between"}}
           [:div {:style {:width "80px" :margin-top 15}}
-           [circular-progress {:sx {:visibility (when (not @loading) "hidden")}}]]
+           [:> CircularProgress {:sx {:visibility (when (not @loading) "hidden")}}]]
 
           [:div {:style {:text-align "center"}}                                  ;; image input for image content of the new post
            [:label
@@ -67,10 +67,10 @@
               :type "file"
               :style {:display "none"}
               :on-change #(reset! image (-> % .-target .-files (aget 0)))}]
-            [icon-button
+            [:> IconButton
              {:component "span"}
-             [add-a-photo-sharp]]]
-           [typography
+             [:> AddAPhotoSharpIcon]]]
+           [:> Typography
             {:variant "h6"
              :component "div"
              :sx {:color (if @image "#070707" "#d32f2f")
@@ -79,7 +79,7 @@
             (if @image (.-name @image) "no photo uploaded")]]
 
           [:div {:style {:text-align "right" :margin-top 15}}                  ;; button for submitting the new post
-           [button
+           [:> Button
             {:variant "contained"
              :disabled (or (and (empty? @text) (nil? @image)) @loading)
              :disable-elevation true

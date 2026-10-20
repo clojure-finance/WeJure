@@ -1,5 +1,5 @@
 (ns wejure.components.titlePage
-  (:require [reagent-mui.material.typography :refer [typography]]))
+  (:require ["@mui/material/Typography$default" :as Typography]))
 
 (defn title-page []
   [:div
@@ -13,7 +13,7 @@
      :style {:height "300px"
              :width "300px"
              :flex "0 1 auto"}}]
-   [typography
+   [:> Typography
     {:variant "h6"
      :component "div"}
     "A decentralized social media."]])
