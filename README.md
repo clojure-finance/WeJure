@@ -17,7 +17,7 @@ Accounts, signatures and end-to-end encryption use SEA, GunDB's cryptography lay
 WeJure is built with [shadow-cljs](https://github.com/thheller/shadow-cljs), which needs:
 - [Node.js](https://nodejs.org/en)
 - [Yarn](https://yarnpkg.com/) 1.x
-- [Java SDK (Adoptium)](https://adoptium.net/)
+- [Java SDK (Adoptium)](https://adoptium.net/) 21 or newer
 
 Running it also needs an [IPFS](https://ipfs.tech/) node ([Kubo](https://github.com/ipfs/kubo)).
 
