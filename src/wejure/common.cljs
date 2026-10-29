@@ -1,11 +1,14 @@
 (ns wejure.common
   "Session and IPFS helpers shared by the pages.")
 
-;; The login session lives in sessionStorage: "username", "icon_cid", and the
-;; key pair "pair" stored by gun's user.recall (see js/db.js).
+;; The login session lives in sessionStorage: "username", "pub", "icon_cid",
+;; and the key pair "pair" stored by gun's user.recall (see js/db.js).
 
 (defn current-username []
   (js/sessionStorage.getItem "username"))
+
+(defn current-pub []
+  (js/sessionStorage.getItem "pub"))
 
 (defn logged-in? []
   (some? (js/sessionStorage.getItem "pair")))

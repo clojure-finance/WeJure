@@ -10,7 +10,7 @@
             [wejure.common :as common]))
 
 (defn search-page [{{:keys [search-input]} :path-params}]
-  (let [results (r/atom [])]                                         ;; [{:username :icon_cid}], exact match first
+  (let [results (r/atom [])]                                         ;; [{:username :pub :icon_cid}], exact matches only
     (profile/searchUser search-input
                         (fn [result exact?]
                           (let [result (js->clj result :keywordize-keys true)]
@@ -24,8 +24,8 @@
         "Search result for: " search-input]
        [:> Paper {:variant "outlined"
                   :sx {:height 800 :my 2 :overflow "auto"}}
-        (for [{:keys [username icon_cid]} @results]
-          ^{:key username}
+        (for [{:keys [username pub icon_cid]} @results]
+          ^{:key pub}
           [:> Box {:sx {:display "flex" :box-shadow 1}}
            [:> Avatar {:sx {:mx 4 :my 2 :width 48 :height 48}
                        :src (common/ipfs-url icon_cid)}]

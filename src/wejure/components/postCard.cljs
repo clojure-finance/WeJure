@@ -1,7 +1,8 @@
 (ns wejure.components.postCard
   "Post state and rendering shared by the feed, profile and post-search pages.
-  A posts atom maps [username key] to a post map with the keys of js/post.js
-  plus :key (its gun key) and :icon_cid (its author's avatar)."
+  A posts atom maps [author key] to a post map with the keys of js/post.js
+  plus :key (its gun key), :author (the author's pub) and the author's
+  :username and :icon_cid from their signed profile."
   (:require ["../js/post" :as post]
             ["../js/profile" :as profile]
             ["@mui/material/Avatar$default" :as Avatar]
@@ -15,19 +16,20 @@
 (defn add-post!
   "Returns an onPost callback for js/post.js that adds each post to posts."
   [posts]
-  (fn [js-post key]
+  (fn [js-post key author]
     (let [p (-> (js->clj js-post :keywordize-keys true)
                 (dissoc :_)
-                (assoc :key key))]
-      (.then (profile/getIconCID (:username p))
-             (fn [cid]
-               (swap! posts assoc [(:username p) key] (assoc p :icon_cid cid)))))))
+                (assoc :key key :author author))]
+      (.then (profile/getProfile author)
+             (fn [js-profile]
+               (let [{:keys [alias icon_cid]} (js->clj js-profile :keywordize-keys true)]
+                 (swap! posts assoc [author key] (assoc p :username alias :icon_cid icon_cid))))))))
 
-(defn- delete-post! [posts {:keys [username key]}]
-  (post/deletePost username key)
-  (swap! posts dissoc [username key]))
+(defn- delete-post! [posts {:keys [author key]}]
+  (post/deletePost key)
+  (swap! posts dissoc [author key]))
 
-(defn- post-card [posts {:keys [username timestamp text image icon_cid] :as p}]
+(defn- post-card [posts {:keys [author username unixtime text image icon_cid] :as p}]
   [:> Paper {:variant "outlined" :sx {:width 850 :my 1}}
    [:> Box {:sx {:display "flex" :justify-content "space-between" :box-shadow 3}}
     [:> Box {:sx {:my 1 :display "flex"}}
@@ -37,7 +39,7 @@
      [:> Typography {:sx {:my 1 :font-size "20px"}}
       username]]
     [:> Typography {:sx {:mx 1 :my 3 :font-size "10px"}}
-     (.toLocaleString (js/Date. timestamp))]]
+     (.toLocaleString (js/Date. unixtime))]]
    (when (seq text)
      [:> Typography {:sx {:mx 2 :my 2 :font-size "16px" :white-space "break-spaces"}}
       text])
@@ -45,7 +47,7 @@
      [:> Box {:sx {:background-color "black" :display "flex" :justify-content "center"}}
       [:img {:style {:max-width "850px"}
              :src (common/ipfs-url image)}]])
-   (when (= username (common/current-username))
+   (when (= author (common/current-pub))
      [:> Box {:sx {:display "flex" :justify-content "flex-end"}}
       [:> Button {:variant "outlined"
                   :sx {:mx 1 :my 1}
@@ -56,6 +58,6 @@
   "The posts in posts, newest first."
   [posts]
   [:> Box {:sx {:display "flex" :flex-direction "column" :align-items "center"}}
-   (for [p (sort-by #(js/Date.parse (:timestamp %)) > (vals @posts))]
-     ^{:key [(:username p) (:key p)]}
+   (for [p (sort-by :unixtime > (vals @posts))]
+     ^{:key [(:author p) (:key p)]}
      [post-card posts p])])

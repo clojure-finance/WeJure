@@ -18,7 +18,7 @@
         (common/ipfs-add @image)
         (js/Promise.resolve nil))
       (.then (fn [image-cid]
-               (post/storePost (common/current-username) (not-empty @text) image-cid)
+               (post/storePost (not-empty @text) image-cid)
                (reset! text "")
                (reset! image nil)))
       (.catch (fn [^js err]
@@ -30,7 +30,7 @@
         text (r/atom "")
         image (r/atom nil)
         loading (r/atom false)]
-    (post/loadFeed (common/current-username) (add-post! posts))
+    (post/loadFeed (common/current-pub) (add-post! posts))
     (fn []
       [:div
        [:> Box {:sx {:display "flex"                                                ;; components for starting a new post

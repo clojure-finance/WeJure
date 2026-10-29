@@ -80,6 +80,19 @@ async function storedFields(page, path) {
     }, path);
 }
 
+// The public key an alias resolves to in gun's account system.
+async function resolvePub(page, alias) {
+    return page.evaluate(async (alias) => {
+        const gun = window.Gun({ peers: ['http://localhost:8001/gun'], localStorage: false });
+        const node = await new Promise((resolve) => {
+            gun.get('~@' + alias).once(resolve);
+            setTimeout(() => resolve(null), 5000);
+        });
+        const key = node && Object.keys(node).find((k) => k.startsWith('~'));
+        return key ? key.slice(1) : null;
+    }, alias);
+}
+
 test('WeJure end to end', async ({ browser }) => {
     const alice = await newUser(browser, 'alice');
     const dana = await newUser(browser, 'dana');
@@ -140,7 +153,6 @@ test('WeJure end to end', async ({ browser }) => {
         await composer.fill('first post');
         await dana.getByRole('button', { name: 'Post' }).click();
         await expect(dana.getByText('first post')).toBeVisible();
-        await dana.waitForTimeout(1100);                                        // posts are keyed by their second
 
         await composer.fill('Hello from dana');
         await dana.setInputFiles('#upload-image', BLUE);
@@ -153,12 +165,12 @@ test('WeJure end to end', async ({ browser }) => {
         expect(feed.indexOf('Hello from dana')).toBeLessThan(feed.indexOf('first post'));    // newest first
     });
 
-    await test.step('dana finds alice and follows her', async () => {
+    await test.step('dana finds alice by her exact name and follows her', async () => {
         const search = dana.getByPlaceholder('Search');
         await expectCaretStays(dana, search);
-        await search.fill(ALICE.slice(0, -2));
+        await search.fill(ALICE);
         await search.press('Enter');
-        await expect(dana).toHaveURL(BASE + '/search/' + ALICE.slice(0, -2));
+        await expect(dana).toHaveURL(BASE + '/search/' + ALICE);
         const hit = dana.locator('div.MuiBox-root', { hasText: ALICE }).last();
         await expect(hit.locator('img.MuiAvatar-img')).toHaveAttribute('src', /\/ipfs\/Qm/);
         await hit.getByRole('link', { name: 'Profile' }).click();
@@ -187,6 +199,7 @@ test('WeJure end to end', async ({ browser }) => {
 
     await test.step('dana messages alice', async () => {
         await dana.goto('/user/' + ALICE);
+        await expect(dana.getByRole('button', { name: 'Unfollow' })).toBeVisible();  // profile loaded; the follow survived a reload
         await dana.getByRole('link', { name: 'Message' }).last().click();
         await expect(dana).toHaveURL(BASE + '/chat');
         await expect(dana.locator('h6', { hasText: ALICE })).toBeVisible();
@@ -227,15 +240,27 @@ test('WeJure end to end', async ({ browser }) => {
         await expect(deletes).toHaveCount(1);
     });
 
-    await test.step('records are stored with their real field names', async () => {
-        expect(await storedFields(dana, ['user', DANA])).toEqual(expect.arrayContaining(['bio', 'icon_cid']));
-        const posts = await storedFields(dana, ['post/' + DANA]);
-        expect(posts.length).toBeGreaterThan(0);
-        expect(await storedFields(dana, ['post/' + DANA, posts.find((key) => key.includes('GMT'))]))
-            .toEqual(expect.arrayContaining(['image', 'text', 'timestamp', 'unixtime', 'username']));
-        const rooms = await storedFields(dana, ['user', DANA, 'chat_list', 'chat']);
+    await test.step('records are stored in user space with their real field names', async () => {
+        const pub = await resolvePub(dana, DANA);
+        expect(pub).toBeTruthy();
+        expect(await storedFields(dana, ['~' + pub, 'profile'])).toEqual(expect.arrayContaining(['alias', 'bio', 'icon_cid']));
+        const postKeys = (await storedFields(dana, ['~' + pub, 'posts'])).filter((key) => /^\d+-/.test(key));
+        expect(postKeys.length).toBeGreaterThan(0);
+        let postFields = null;                                           // one post was deleted; find a live one
+        for (const key of postKeys) {
+            postFields = await storedFields(dana, ['~' + pub, 'posts', key]);
+            if (postFields) break;
+        }
+        expect(postFields).toEqual(expect.arrayContaining(['image', 'text', 'unixtime']));
+        const rooms = (await storedFields(dana, ['~' + pub, 'chats'])).filter((key) => /^[0-9a-f]{64}$/.test(key));
         expect(rooms).toHaveLength(1);
-        expect(await storedFields(dana, ['user', DANA, 'chat_list', 'chat', rooms[0]])).toEqual(['last_message_time', 'peer']);
+        expect(await storedFields(dana, ['~' + pub, 'chats', rooms[0]])).toEqual(expect.arrayContaining(['last_message_time', 'peer']));
+
+        await dana.goto('/user/~' + pub);                                        // the canonical, collision-proof URL
+        await expect(dana.getByText("dana's bio")).toBeVisible();
+        await expect(dana.getByText(DANA, { exact: true }).last()).toBeVisible();
+        await dana.goto('/user/~not-a-real-key');
+        await expect(dana.getByText('User not found')).toBeVisible();
     });
 
     await test.step('logged-in routes and logout', async () => {

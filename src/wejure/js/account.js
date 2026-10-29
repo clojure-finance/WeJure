@@ -1,6 +1,7 @@
 import CryptoJS from 'crypto-js';
 import { gun, user } from './db';
 import * as records from './records';
+import { lookupPubs } from './profile';
 
 // Existing accounts were created with SHA-256-hashed passwords, so keep hashing.
 function hashPassword(password) {
@@ -14,18 +15,43 @@ export function login(name, password, onDone) {
             onDone(err);
             return;
         }
+        const pub = user.is.pub;
         sessionStorage.setItem("username", name);
-        gun.get("user").get(name).get("icon_cid").once((cid) => {
+        sessionStorage.setItem("pub", pub);
+        gun.get("~" + pub).get("profile").get("icon_cid").once((cid) => {
             if (cid) sessionStorage.setItem("icon_cid", cid);
             onDone(null);
         });
     });
 }
 
+// Resolves when the relay acknowledges the write (gun's put callback fires on
+// relay ack), rejecting if no ack arrives in time. Registration waits for this
+// so the page's post-registration reload cannot destroy a still-pending write
+// and leave the account with no readable profile. A silent timeout would
+// re-introduce exactly that bug, so the timeout rejects.
+function acked(node, value) {
+    return new Promise((resolve, reject) => {
+        let settled = false;
+        node.put(value, (ack) => {
+            if (settled) return;
+            settled = true;
+            if (ack.err) reject(new Error(ack.err)); else resolve();
+        });
+        setTimeout(() => {
+            if (!settled) { settled = true; reject(new Error("The profile could not be saved. Please try again.")); }
+        }, 20000);
+    });
+}
+
 // onDone(err): err is null on success, otherwise a message to show.
+// The profile and the self-follow live in the new account's own user space,
+// so the account is logged in just long enough to write them signed. It must
+// be an explicit auth: user.create already sets user.is, but writes made
+// before auth are not validly signed and are dropped by every peer.
 export function register(name, password, iconCID, onDone) {
-    gun.get("user").get(name).once((existing) => {
-        if (existing) {
+    lookupPubs(name).then((pubs) => {
+        if (pubs.length > 0) {
             onDone("Username already exists. Please choose a different username.");
             return;
         }
@@ -34,9 +60,22 @@ export function register(name, password, iconCID, onDone) {
                 onDone(err);
                 return;
             }
-            gun.get("user").get(name).put(records.userProfile(iconCID, ""));
-            gun.get("user").get(name).get("is_following").get(name).put(true);   // own posts appear in the feed
-            onDone(null);
+            user.auth(name, hashPassword(password), ({ err: authErr }) => {
+                if (authErr) {
+                    onDone(authErr);
+                    return;
+                }
+                Promise.all([
+                    acked(user.get("profile"), records.userProfile(name, iconCID, "")),
+                    acked(user.get("follows").get(user.is.pub), true),  // own posts appear in the feed
+                ])
+                    .then(() => {
+                        user.leave();
+                        sessionStorage.removeItem("pair");
+                        onDone(null);
+                    })
+                    .catch((e) => onDone(e.message));
+            });
         });
     });
 }

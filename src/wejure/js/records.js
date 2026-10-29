@@ -10,52 +10,65 @@
 // (Gun's and SEA's own API names, such as the err of an ack or the sessionStorage
 // option of recall, need no quoting: shadow-cljs keeps every property name that
 // npm code uses.)
+//
+// Owned data lives in the writer's SEA user space (~<pub>), so a record's author
+// is the owner of the node it was read from; records carry no username field.
 
-// user/<username>
-export function userProfile(iconCID, bio) {
-    return { "icon_cid": iconCID, "bio": bio };
+// ~<pub>/profile
+export function userProfile(alias, iconCID, bio) {
+    return { "alias": alias, "icon_cid": iconCID, "bio": bio };
+}
+
+export function aliasOf(profile) {
+    return profile["alias"];
 }
 
 export function iconCIDOf(profile) {
     return profile["icon_cid"];
 }
 
-// post/<username>/<timestamp>, keyed by the post's UTC timestamp string
-export function post(username, date, text, imageCID) {
+export function bioOf(profile) {
+    return profile["bio"];
+}
+
+// ~<pub>/posts/<key>, keyed by newPostKey so two posts in the same
+// millisecond still get distinct keys.
+export function newPostKey(date) {
+    return date.getTime() + "-" + Math.random().toString(36).slice(2, 8);
+}
+
+export function post(date, text, imageCID) {
     return {
-        "username": username,
-        "timestamp": date.toUTCString(),
         "text": text ?? null,
         "image": imageCID ?? null,
         "unixtime": date.getTime()
     };
 }
 
-export function timestampOf(post) {
-    return post["timestamp"];
-}
-
 export function textOf(post) {
     return post["text"];
 }
 
-// A direct or group chat message; stored encrypted, so only its readers see the fields.
-export function message(sender, timeKey, content) {
+// A direct or group chat message; stored encrypted, so only its readers see the
+// fields. The sender alias is display-only: authorship comes from whose outbox
+// the message was read from.
+export function message(senderAlias, timeKey, content) {
     return {
         "timestamp": new Date(timeKey).toUTCString(),
-        "sender": sender,
+        "sender": senderAlias,
         "content": content
     };
 }
 
-// user/<username>/chat_list/chat/<roomID>
-export function chatListEntry(peer, lastMessageTime) {
-    return { "peer": peer, "last_message_time": lastMessageTime };
+// ~<pub>/chats/<roomID>: the owner's own record of a conversation
+// (its messages live under the node's "msgs" edge).
+export function chatListEntry(peerPub, lastMessageTime) {
+    return { "peer": peerPub, "last_message_time": lastMessageTime };
 }
 
-// user/<username>/chat_list/group/<groupID>
-export function groupChatListEntry(lastMessageTime) {
-    return { "last_message_time": lastMessageTime };
+// ~<pub>/chats/g:<groupID>
+export function groupChatListEntry(creatorPub, lastMessageTime) {
+    return { "creator": creatorPub, "last_message_time": lastMessageTime };
 }
 
 export function peerOf(entry) {
@@ -66,21 +79,65 @@ export function lastMessageTimeOf(entry) {
     return entry["last_message_time"];
 }
 
-// groups/<groupID>
-export function group(groupName, creator, date) {
+// inbox/<pub>/<key>: how another user reaches someone's client (chat requests,
+// group invites). The node is public and unowned, so entries count only when
+// sig verifies against from.
+export function inboxEntry(fromPub, sig) {
+    return { "from": fromPub, "sig": sig };
+}
+
+export function inboxFromOf(entry) {
+    return entry["from"];
+}
+
+export function inboxSigOf(entry) {
+    return entry["sig"];
+}
+
+// The signed payloads of inbox entries.
+export function chatPointer(roomID, at) {
+    return { "room": roomID, "at": at };
+}
+
+export function groupPointer(groupID, creatorPub, at) {
+    return { "group": groupID, "creator": creatorPub, "at": at };
+}
+
+export function pointerRoomOf(pointer) {
+    return pointer["room"];
+}
+
+export function pointerGroupOf(pointer) {
+    return pointer["group"];
+}
+
+export function pointerCreatorOf(pointer) {
+    return pointer["creator"];
+}
+
+export function pointerAtOf(pointer) {
+    return pointer["at"];
+}
+
+// ~<creatorPub>/groups/<groupID>
+export function group(groupName, date) {
     return {
         "group_name": groupName,
-        "creator": creator,
         "created": date.toUTCString(),
         "totallayer": 0
     };
 }
 
-// For the pages only, not stored: a user search hit and a chat contact.
-export function userSearchResult(username, iconCID) {
-    return { "username": username, "icon_cid": iconCID };
+// For the pages only, not stored: an alias lookup, a user search hit and a
+// chat contact.
+export function aliasLookup(pubs) {
+    return { "pubs": pubs };
 }
 
-export function contact(id, avatar, lastMessageTime) {
-    return { "id": id, "avatar": avatar, "last_message_time": lastMessageTime };
+export function userSearchResult(username, pub, iconCID) {
+    return { "username": username, "pub": pub, "icon_cid": iconCID };
+}
+
+export function contact(pub, username, avatar, lastMessageTime) {
+    return { "id": pub, "username": username, "avatar": avatar, "last_message_time": lastMessageTime };
 }

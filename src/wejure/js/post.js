@@ -1,43 +1,43 @@
-import { gun } from './db';
+import { gun, user } from './db';
 import * as records from './records';
 
-// A user's posts live in the top-level node "post/<username>" (one node, not
-// post -> username), keyed by the post's UTC timestamp string.
-function postsOf(username) {
-    return gun.get("post/" + username);
+// A user's posts live in their own user space under "posts", keyed by
+// newPostKey. Only the owner's signed writes reach that space, so a post's
+// author is the pub whose space it was read from.
+function postsOf(pub) {
+    return gun.get("~" + pub).get("posts");
 }
 
-export function storePost(username, text, imageCID) {
-    const post = records.post(username, new Date(), text, imageCID);
-    postsOf(username).get(records.timestampOf(post)).put(post);
+export function storePost(text, imageCID) {
+    const date = new Date();
+    user.get("posts").get(records.newPostKey(date)).put(records.post(date, text, imageCID));
 }
 
-export function deletePost(username, key) {
-    postsOf(username).get(key).put(null);
+export function deletePost(key) {
+    user.get("posts").get(key).put(null);
 }
 
-// onPost(post, key) is called once per existing post, and for posts added later.
-export function loadPosts(username, onPost) {
-    postsOf(username).map().once((post, key) => {
-        if (post) onPost(post, key);
+// onPost(post, key, authorPub) is called once per existing post, and for posts
+// added later.
+export function loadPosts(pub, onPost) {
+    postsOf(pub).map().once((post, key) => {
+        if (post) onPost(post, key, pub);
     });
 }
 
 // Posts of everyone the user follows (registration makes users follow themselves).
-export function loadFeed(username, onPost) {
-    gun.get("user").get(username).get("is_following").map().once((following, followee) => {
-        if (following === true) loadPosts(followee, onPost);
+export function loadFeed(selfPub, onPost) {
+    gun.get("~" + selfPub).get("follows").map().once((following, pub) => {
+        if (following === true) loadPosts(pub, onPost);
     });
 }
 
-// Case-insensitive substring search over the text of every user's posts.
-export function searchPosts(query, onPost) {
+// Case-insensitive substring search over the posts of everyone the user
+// follows (users cannot be enumerated, and this also bounds the read).
+export function searchPosts(selfPub, query, onPost) {
     const needle = query.toLowerCase();
-    gun.get("user").map().once((info, username) => {
-        if (!info) return;
-        loadPosts(username, (post, key) => {
-            const text = records.textOf(post);
-            if (text && text.toLowerCase().includes(needle)) onPost(post, key);
-        });
+    loadFeed(selfPub, (post, key, pub) => {
+        const text = records.textOf(post);
+        if (text && text.toLowerCase().includes(needle)) onPost(post, key, pub);
     });
 }

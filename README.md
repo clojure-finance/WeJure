@@ -9,7 +9,7 @@ Accounts, signatures and end-to-end encryption use SEA, GunDB's cryptography lay
 - Accounts with a profile picture and a bio
 - Posts with text and/or an image; a feed of the people you follow; deleting your own posts
 - Following and unfollowing users
-- Searching users by name and posts by text
+- Finding users by their exact name, and searching the posts of the people you follow by text
 - End-to-end encrypted direct messages, and blocking users
 - Group chat with layered encryption (backend only, see [Status](#status))
 
@@ -66,35 +66,42 @@ For an optimized build, run `yarn release`; it writes `public/js/main.js`. Serve
   ipfs config --json API.HTTPHeaders.Access-Control-Allow-Origin '["http://localhost:8020", "http://localhost:5001", "https://webui.ipfs.io"]'
   ipfs config --json API.HTTPHeaders.Access-Control-Allow-Methods '["PUT", "POST"]'
   ```
-- **GunDB relay**: `src/wejure/js/relay.js` listens on 127.0.0.1:8001 (override with the `HOST` and `PORT` environment variables). Users only see each other's data when their browsers reach a common relay, so for more than one machine, run `relay.js` on a reachable host (for example `HOST=0.0.0.0 node relay`) and add its URL to `peers` in `src/wejure/js/db.js`.
+- **GunDB relay**: `src/wejure/js/relay.js` listens on 127.0.0.1:8001 (override with the `HOST` and `PORT` environment variables). Users only see each other's data when their browsers reach a common relay, so for more than one machine, run `relay.js` on a reachable host (for example `HOST=0.0.0.0 node relay`) and add its URL to `peers` in `src/wejure/js/db.js`. The relay loads SEA, so it checks signatures itself, and it refuses writes to the node names of the old shared data model (`user`, `post/*`, `chat`, `groups`, `groupKeys`, `groupChat`).
 
 ## Security and encryption
-- **Accounts**: GunDB SEA creates a key pair per user. Passwords are SHA-256-hashed before they reach SEA.
-- **Direct messages**: the sender and the recipient derive the same shared secret with ECDH (`SEA.secret(recipientEpub, senderPair)`), and each message is encrypted with AES-GCM (`SEA.encrypt(message, secret)`). Only the two participants can read it.
-- **Group chats**: every membership change starts a new *layer* with a fresh random key, which the group creator encrypts separately for each member of that layer. Members can decrypt exactly the layers they belonged to: new members cannot read messages from before they joined, and removed members cannot read messages sent after they left.
-- **Public data**: profiles, posts, follows, blocks and the list of who has chatted with whom are stored unencrypted.
+- **Accounts and identity**: GunDB SEA creates a key pair per user. A user's public key (`pub`) is their identity; the username is an alias registered in SEA's account system (`~@<alias>`) and repeated in the signed profile. Passwords are SHA-256-hashed before they reach SEA.
+- **Data ownership**: everything a user owns (profile, posts, follows, blocks, chats, groups) lives in their SEA user space `~<pub>`. Every write there is signed, and writes not signed by the owner are rejected by the writer's own client, by the relay and by every reader, so nobody can change or delete another user's data. `test/e2e/security.spec.js` checks this.
+- **Usernames**: aliases are first come, first served, but an open network cannot rule out two accounts racing for the same name. If more than one account claims an alias, `/user/<alias>` lists the claimants instead of picking one, so a later registration cannot take over an existing user's page. `/user/~<pub>` always names exactly one account.
+- **Direct messages**: the sender and the recipient derive the same shared secret with ECDH (`SEA.secret(recipientEpub, senderPair)`), and each message is encrypted with AES-GCM (`SEA.encrypt(message, secret)`). Only the two participants can read it. Each participant writes their messages into their own user space, so who sent a message is determined by where it is stored, not by a field in it.
+- **Reaching someone new**: nobody can write into another user's space, so a first message (or a group invitation) also leaves a pointer in the public node `inbox/<pub>`. The pointer is signed by the sender; the recipient's client verifies it and then records the conversation in its own space. Unsigned or forged pointers are ignored. The inbox is the one place others can write to, so it can be spammed, but a vandalized entry loses at most a notification, never a message.
+- **Blocking**: the blacklist is encrypted with the owner's own key, so nobody else can see who blocks whom. Blocking works on the blocker's side: their client ignores the blocked user, who is not told.
+- **Group chats**: the group's definition lives in its creator's user space, so only the creator can change membership. Every membership change starts a new *layer* with a fresh random key, which the creator encrypts separately for each member of that layer. Members can decrypt exactly the layers they belonged to: new members cannot read messages from before they joined, and removed members cannot read messages sent after they left.
+- **Public data**: profiles, posts, follows and which conversations a user has (not their contents) are signed but stored unencrypted.
 
 ## Data model
-GunDB paths (`a/b` means `gun.get("a").get("b")`, except `post/<username>`, which is a single top-level node):
+GunDB paths (`a/b` means `gun.get("a").get("b")`; `~<pub>` is a user's SEA user space, written through `gun.user()`):
 
 | Path | Content |
 |------|---------|
-| `user/<username>` | `{icon_cid, bio}` |
-| `user/<username>/is_following/<username>` | `true` or `false` (users follow themselves, so their own posts appear in their feed) |
-| `user/<username>/blacklist/<username>` | `true` if blocked, `null` once unblocked |
-| `user/<username>/blockedBy/<username>` | mirror of the blacklist |
-| `user/<username>/chat_list/chat/<roomID>` | `{peer, last_message_time}` for each conversation |
-| `user/<username>/chat_list/group/<groupID>` | `{last_message_time}` for each group |
-| `post/<username>/<UTC timestamp>` | `{username, timestamp, text, image, unixtime}`; `image` is an IPFS CID |
-| `chat/<roomID>/<time ms>` | encrypted `{timestamp, sender, content}`; `roomID` is the SHA-256 of the two usernames, sorted and joined with `-` |
-| `groups/<groupID>` | `{group_name, creator, created, totallayer}` |
-| `groups/<groupID>/<layer>/members/<username>` | `true` |
-| `groupKeys/<groupID>/<layer>/<username>` | the layer key, encrypted for that member |
-| `groupChat/<groupID>/<layer>/<time ms>` | encrypted `{timestamp, sender, content}` |
+| `~<pub>/profile` | `{alias, icon_cid, bio}`; `icon_cid` is an IPFS CID |
+| `~<pub>/follows/<pub>` | `true`, or `null` once unfollowed (users follow themselves, so their own posts appear in their feed) |
+| `~<pub>/blocks/<pub>` | `SEA.encrypt(true, ownPair)`, or `null` once unblocked |
+| `~<pub>/posts/<post key>` | `{text, image, unixtime}`; the key is `<unixtime>-<random>`, so posts made in the same millisecond still get distinct keys |
+| `~<pub>/chats/<roomID>` | `{peer, last_message_time}`: the owner's record of a conversation; `roomID` is the SHA-256 of the two pubs, sorted and joined with `-` |
+| `~<pub>/chats/<roomID>/msgs/<time ms>` | the owner's sent messages, encrypted `{timestamp, sender, content}` |
+| `~<pub>/chats/g:<groupID>` | `{creator, last_message_time}` for each group |
+| `~<pub>/groups/<groupID>` | `{group_name, created, totallayer}`, for groups this user created |
+| `~<pub>/groups/<groupID>/<layer>/members/<pub>` | `true` |
+| `~<pub>/groups/<groupID>/<layer>/keys/<pub>` | the layer key, encrypted for that member |
+| `~<pub>/groupChats/<groupID>/<layer>/<time ms>` | the owner's group messages, encrypted with the layer key |
+| `inbox/<pub>/<roomID or groupID>` | `{from, sig}`: a pointer to a conversation or group, signed by `from` |
 
 The record fields above are built and read only in `src/wejure/js/records.js`. Release builds compile `src/wejure/js/` with Closure's advanced optimizations, which rename unquoted property names; `records.js` writes every field with a quoted key, so they keep these names. Add new fields there, not as object literals or dot access in the other modules.
 
-The browser keeps the session in `sessionStorage`: `username`, `icon_cid` and the SEA key pair `pair`.
+The browser keeps the session in `sessionStorage`: `username`, `pub`, `icon_cid` and the SEA key pair `pair`.
+
+### Upgrading a relay from the old data model
+Data written before the ownership redesign (October 2026) used shared nodes keyed by username, which anyone could overwrite. It is not migrated: stop the relay, delete its `radata` directory (`./remove_local_gun.sh` for a relay run from `src/wejure/js/`), update, and restart. Users re-register; the new relay refuses writes to the old node names.
 
 ## Code layout
 - `src/wejure/core.cljs`: routes, and redirects between logged-in and logged-out pages
@@ -102,10 +109,10 @@ The browser keeps the session in `sessionStorage`: `username`, `icon_cid` and th
 - `src/wejure/components/`: one namespace per page, plus the navigation bar and `postCard.cljs`, the post list shared by the feed, profile and post-search pages
 - `src/wejure/components/textField.cljs`: the MUI text field every page uses; it keeps the caret in place while typing
 - `src/wejure/js/`: the GunDB layer, called from ClojureScript with callbacks or promises: `db.js` (the shared GunDB instance), `records.js` (the stored record formats), `account.js`, `profile.js`, `post.js`, `chat.js`; and `relay.js`, the relay server
-- `test/e2e/`: the end-to-end test
+- `test/e2e/`: the end-to-end tests: `wejure.spec.js` (every page, two users) and `security.spec.js` (data ownership)
 
 ## Testing
-`yarn test:e2e` builds the release version and runs a browser test through every page with two users. Install its browser once with `npx playwright install chromium`. The test starts its own relay (with empty data), an IPFS stand-in and a web server, on the ports the app uses (8001, 5001 and 8080, 8020), so stop any IPFS daemon, relay or dev server first.
+`yarn test:e2e` builds the release version and runs a browser test through every page with two users, plus tests that anonymous clients and other logged-in users cannot change anyone else's data. Install its browser once with `npx playwright install chromium`. The test starts its own relay (with empty data), an IPFS stand-in and a web server, on the ports the app uses (8001, 5001 and 8080, 8020), so stop any IPFS daemon, relay or dev server first.
 
 ## Deleting all data
 1. Clear the site data (local storage) in every browser that opened WeJure.
