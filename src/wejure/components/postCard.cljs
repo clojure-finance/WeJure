@@ -13,23 +13,31 @@
             [reitit.frontend.easy :as reitit-fe]
             [wejure.common :as common]))
 
-(defn add-post!
-  "Returns an onPost callback for js/post.js that adds each post to posts."
+(defn sync-posts!
+  "Returns an onPost callback for js/post.js that adds each post to posts and
+  removes deleted ones."
   [posts]
-  (fn [js-post key author]
-    (let [p (-> (js->clj js-post :keywordize-keys true)
-                (dissoc :_)
-                (assoc :key key :author author))]
-      (.then (profile/getProfile author)
-             (fn [js-profile]
-               (let [{:keys [alias icon_cid]} (js->clj js-profile :keywordize-keys true)]
-                 (swap! posts assoc [author key] (assoc p :username alias :icon_cid icon_cid))))))))
+  (let [live (atom #{})]                                                 ;; a deletion can overtake the profile fetch
+    (fn [js-post key author]
+      (let [k [author key]]
+        (if (nil? js-post)
+          (do (swap! live disj k)
+              (swap! posts dissoc k))
+          (let [p (-> (js->clj js-post :keywordize-keys true)
+                      (dissoc :_)
+                      (assoc :key key :author author))]
+            (swap! live conj k)
+            (.then (profile/getProfile author)
+                   (fn [js-profile]
+                     (let [{:keys [alias icon_cid]} (js->clj js-profile :keywordize-keys true)]
+                       (when (contains? @live k)
+                         (swap! posts assoc k (assoc p :username alias :icon_cid icon_cid))))))))))))
 
 (defn- delete-post! [posts {:keys [author key]}]
   (post/deletePost key)
   (swap! posts dissoc [author key]))
 
-(defn- post-card [posts {:keys [author username unixtime text image icon_cid] :as p}]
+(defn- post-card [posts pending? {:keys [author username unixtime text image icon_cid] :as p}]
   [:> Paper {:variant "outlined" :sx {:width 850 :my 1}}
    [:> Box {:sx {:display "flex" :justify-content "space-between" :box-shadow 3}}
     [:> Box {:sx {:my 1 :display "flex"}}
@@ -47,7 +55,12 @@
      [:> Box {:sx {:background-color "black" :display "flex" :justify-content "center"}}
       [:img {:style {:max-width "850px"}
              :src (common/ipfs-url image)}]])
-   (when (= author (common/current-pub))
+   (cond
+     pending?
+     [:> Typography {:sx {:mx 2 :my 1 :font-size "12px" :color "grey" :text-align "right"}}
+      "Sending…"]
+
+     (= author (common/current-pub))
      [:> Box {:sx {:display "flex" :justify-content "flex-end"}}
       [:> Button {:variant "outlined"
                   :sx {:mx 1 :my 1}
@@ -55,9 +68,12 @@
        "Delete"]])])
 
 (defn post-list
-  "The posts in posts, newest first."
-  [posts]
-  [:> Box {:sx {:display "flex" :flex-direction "column" :align-items "center"}}
-   (for [p (sort-by :unixtime > (vals @posts))]
-     ^{:key [(:author p) (:key p)]}
-     [post-card posts p])])
+  "The posts in posts, newest first. pending holds the keys of the user's own
+  posts that the relay has not confirmed yet."
+  ([posts] (post-list posts nil))
+  ([posts pending]
+   (let [pending (if pending @pending #{})]
+     [:> Box {:sx {:display "flex" :flex-direction "column" :align-items "center"}}
+      (for [p (sort-by :unixtime > (vals @posts))]
+        ^{:key [(:author p) (:key p)]}
+        [post-card posts (and (= (:author p) (common/current-pub)) (contains? pending (:key p))) p])])))

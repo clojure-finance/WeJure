@@ -1,5 +1,5 @@
 import CryptoJS from 'crypto-js';
-import { gun, user } from './db';
+import { gun, user, acked } from './db';
 import * as records from './records';
 import { lookupPubs } from './profile';
 
@@ -25,30 +25,14 @@ export function login(name, password, onDone) {
     });
 }
 
-// Resolves when the relay acknowledges the write (gun's put callback fires on
-// relay ack), rejecting if no ack arrives in time. Registration waits for this
-// so the page's post-registration reload cannot destroy a still-pending write
-// and leave the account with no readable profile. A silent timeout would
-// re-introduce exactly that bug, so the timeout rejects.
-function acked(node, value) {
-    return new Promise((resolve, reject) => {
-        let settled = false;
-        node.put(value, (ack) => {
-            if (settled) return;
-            settled = true;
-            if (ack.err) reject(new Error(ack.err)); else resolve();
-        });
-        setTimeout(() => {
-            if (!settled) { settled = true; reject(new Error("The profile could not be saved. Please try again.")); }
-        }, 20000);
-    });
-}
-
 // onDone(err): err is null on success, otherwise a message to show.
 // The profile and the self-follow live in the new account's own user space,
 // so the account is logged in just long enough to write them signed. It must
 // be an explicit auth: user.create already sets user.is, but writes made
 // before auth are not validly signed and are dropped by every peer.
+// Registration waits for the relay to store both writes, so the page's
+// post-registration reload cannot destroy a pending write and leave the account
+// without a readable profile; a timeout is an error for the same reason.
 export function register(name, password, iconCID, onDone) {
     lookupPubs(name).then((pubs) => {
         if (pubs.length > 0) {
@@ -66,15 +50,15 @@ export function register(name, password, iconCID, onDone) {
                     return;
                 }
                 Promise.all([
-                    acked(user.get("profile"), records.userProfile(name, iconCID, "")),
-                    acked(user.get("follows").get(user.is.pub), true),  // own posts appear in the feed
+                    acked(user.get("profile"), records.userProfile(name, iconCID, ""), 20000),
+                    acked(user.get("follows").get(user.is.pub), true, 20000),  // own posts appear in the feed
                 ])
                     .then(() => {
                         user.leave();
                         sessionStorage.removeItem("pair");
                         onDone(null);
                     })
-                    .catch((e) => onDone(e.message));
+                    .catch((e) => onDone("The profile could not be saved: " + e.message + " Please try again."));
             });
         });
     });

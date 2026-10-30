@@ -1,5 +1,5 @@
 import CryptoJS from 'crypto-js';
-import { gun, user, SEA } from './db';
+import { gun, user, SEA, subscribe } from './db';
 import * as records from './records';
 
 function currentPub() {
@@ -57,7 +57,8 @@ export function removeFromBlacklist(pubToUnblock) {
 // this client as a signed pointer in the public inbox/<self> node; verified
 // pointers become own chat entries, everything else is ignored. onContacts
 // receives the full array [{id, username, avatar, last_message_time}] on
-// every change. Returns a function that stops further calls.
+// every change. Returns a function that stops further calls and the
+// subscriptions behind them.
 export function init(onContacts) {
     const self = currentPub();
     const pair = currentPair();
@@ -66,6 +67,7 @@ export function init(onContacts) {
     const lastMessageTime = new Map();                  // peer pub -> ms
     const profiles = new Map();                         // pub -> {username, avatar}
     const chatTimes = new Map();                        // room id -> own entry's last_message_time
+    const stops = [];
     let stopped = false;
 
     const publish = () => {
@@ -89,11 +91,11 @@ export function init(onContacts) {
         });
     };
 
-    userNode(self).get("blocks").map().on(async (value, pub) => {
+    stops.push(subscribe(userNode(self).get("blocks").map(), async (value, pub) => {
         if (value && (await SEA.decrypt(value, pair)) === true) blocked.add(pub); else blocked.delete(pub);
         publish();
-    });
-    userNode(self).get("follows").map().on((following, pub) => {
+    }));
+    stops.push(subscribe(userNode(self).get("follows").map(), (following, pub) => {
         if (following === true) {
             followees.add(pub);
             fetchProfile(pub);
@@ -101,16 +103,16 @@ export function init(onContacts) {
             followees.delete(pub);
         }
         publish();
-    });
-    userNode(self).get("chats").map().on((entry, roomID) => {
+    }));
+    stops.push(subscribe(userNode(self).get("chats").map(), (entry, roomID) => {
         const peer = entry && records.peerOf(entry);
         if (!peer) return;                              // group entries and tombstones
         chatTimes.set(roomID, records.lastMessageTimeOf(entry) || 0);
         lastMessageTime.set(peer, Math.max(lastMessageTime.get(peer) || 0, records.lastMessageTimeOf(entry) || 0));
         fetchProfile(peer);
         publish();
-    });
-    gun.get("inbox").get(self).map().on(async (entry) => {
+    }));
+    stops.push(subscribe(gun.get("inbox").get(self).map(), async (entry) => {
         const from = entry && records.inboxFromOf(entry);
         if (!from || from === self || blocked.has(from)) return;
         const pointer = await SEA.verify(records.inboxSigOf(entry), from);
@@ -125,10 +127,13 @@ export function init(onContacts) {
             user.get("chats").get("g:" + records.pointerGroupOf(pointer))
                 .put(records.groupChatListEntry(records.pointerCreatorOf(pointer), at));
         }
-    });
+    }));
 
     publish();
-    return () => { stopped = true; };
+    return () => {
+        stopped = true;
+        stops.forEach((stop) => stop());
+    };
 }
 
 // ---------------------------------------------------------------------------
@@ -160,20 +165,32 @@ export async function storeMessage(peerPub, content) {
 
 // onMessage(peerPub, {timestamp, sender, content}, timeKey, own) is called once
 // per message in the conversation with peerPub, including messages sent later.
-export async function displayMessage(peerPub, onMessage) {
+// Returns a function that stops the calls and the subscriptions behind them.
+export function displayMessage(peerPub, onMessage) {
     const self = currentPub();
-    const peerEPub = await getEPub(peerPub);
-    if (!peerEPub) return;
-    const secret = await SEA.secret(peerEPub, currentPair());
     const roomID = chatRoomID(self, peerPub);
-    const subscribe = (pub, own) => {
-        userNode(pub).get("chats").get(roomID).get("msgs").map().once(async (data, timeKey) => {
-            const message = await SEA.decrypt(data, secret);
-            if (message) onMessage(peerPub, message, timeKey, own);
-        });
+    const stops = [];
+    let stopped = false;
+    (async () => {
+        const peerEPub = await getEPub(peerPub);
+        if (!peerEPub || stopped) return;
+        const secret = await SEA.secret(peerEPub, currentPair());
+        const outbox = (pub, own) => {
+            const seen = new Set();                     // gun repeats updates
+            return subscribe(userNode(pub).get("chats").get(roomID).get("msgs").map(), async (data, timeKey) => {
+                if (!data || seen.has(timeKey)) return;
+                seen.add(timeKey);
+                const message = await SEA.decrypt(data, secret);
+                if (message && !stopped) onMessage(peerPub, message, timeKey, own);
+            });
+        };
+        if (stopped) return;
+        stops.push(outbox(self, true), outbox(peerPub, false));
+    })();
+    return () => {
+        stopped = true;
+        stops.forEach((stop) => stop());
     };
-    subscribe(self, true);
-    subscribe(peerPub, false);
 }
 
 // ---------------------------------------------------------------------------

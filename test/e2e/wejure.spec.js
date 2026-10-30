@@ -68,10 +68,10 @@ async function expectCaretStays(page, field) {
 }
 
 // The field names of a node as stored on the relay (read by a fresh gun instance
-// without local storage), or null if the node is missing.
+// without local storage or WebRTC peers), or null if the node is missing.
 async function storedFields(page, path) {
     return page.evaluate(async (path) => {
-        const gun = window.Gun({ peers: ['http://localhost:8001/gun'], localStorage: false });
+        const gun = window.Gun({ peers: ['http://localhost:8001/gun'], localStorage: false, RTCPeerConnection: false });
         const node = await new Promise((resolve) => {
             path.reduce((n, key) => n.get(key), gun).once(resolve);
             setTimeout(() => resolve(null), 5000);
@@ -83,7 +83,7 @@ async function storedFields(page, path) {
 // The public key an alias resolves to in gun's account system.
 async function resolvePub(page, alias) {
     return page.evaluate(async (alias) => {
-        const gun = window.Gun({ peers: ['http://localhost:8001/gun'], localStorage: false });
+        const gun = window.Gun({ peers: ['http://localhost:8001/gun'], localStorage: false, RTCPeerConnection: false });
         const node = await new Promise((resolve) => {
             gun.get('~@' + alias).once(resolve);
             setTimeout(() => resolve(null), 5000);

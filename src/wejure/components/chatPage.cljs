@@ -66,16 +66,21 @@
                peer (r/atom nil)                                       ;; {:id :username} of the open conversation
                messages (r/atom (sorted-map))                          ;; gun time key (ms) -> {:message :own?}
                draft (r/atom "")
+               stop-messages (atom (fn []))                            ;; stops the open conversation's subscriptions
+               close-chat! (fn []
+                             (@stop-messages)
+                             (reset! peer nil)
+                             (reset! messages (sorted-map)))
                open-chat! (fn [p]
+                            (close-chat!)
                             (reset! peer p)
-                            (reset! messages (sorted-map))
-                            (chat/displayMessage (:id p)
-                                                 (fn [from message time-key own?]
-                                                   (when (= from (:id @peer))   ;; ignore conversations opened earlier
-                                                     (swap! messages assoc (js/parseInt time-key)
-                                                            {:message (js->clj message :keywordize-keys true)
-                                                             :own? own?})
-                                                     (scroll-to-bottom)))))
+                            (reset! stop-messages
+                                    (chat/displayMessage (:id p)
+                                                         (fn [_ message time-key own?]
+                                                           (swap! messages assoc (js/parseInt time-key)
+                                                                  {:message (js->clj message :keywordize-keys true)
+                                                                   :own? own?})
+                                                           (scroll-to-bottom)))))
                send! (fn []
                        (let [text @draft]
                          (when (and @peer (seq text))
@@ -120,7 +125,7 @@
                       :on-click (fn []
                                   (chat/addToBlacklist (:id @peer))
                                   (js/alert (str "You have blocked " (:username @peer)))
-                                  (reset! peer nil))
+                                  (close-chat!))
                       :sx {:ml "auto"}}
            "Block User"])]
 
@@ -148,4 +153,5 @@
                       :on-click send!}
            "Send"]]]]]]]
     (finally
-      (stop-contacts))))
+      (stop-contacts)
+      (@stop-messages))))

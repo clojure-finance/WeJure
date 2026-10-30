@@ -7,6 +7,10 @@
 // through a fresh gun instance connected to the test relay), and a logged-in
 // account whose writes are correctly signed but by the wrong user. A last test
 // checks that the relay refuses the legacy pre-ownership nodes outright.
+//
+// The test's own gun instances talk to the relay only: the app loads gun's
+// WebRTC plugin, which would otherwise connect them straight to the other
+// pages, so a write could be read back from a browser that never saw the relay.
 const crypto = require('crypto');
 const { test, expect } = require('@playwright/test');
 
@@ -48,7 +52,7 @@ async function login(page, name) {
 // Resolves with the ack's error (SEA usually rejects at the source), or null.
 function anonPut(page, path, value) {
     return page.evaluate(({ path, value, relay }) => new Promise((resolve) => {
-        const gun = window.Gun({ peers: [relay], localStorage: false });
+        const gun = window.Gun({ peers: [relay], localStorage: false, RTCPeerConnection: false });
         path.reduce((n, k) => n.get(k), gun).put(value, (ack) => resolve(ack.err ? String(ack.err) : null));
         setTimeout(() => resolve('timeout: no ack'), 5000);
     }), { path, value, relay: RELAY });
@@ -59,7 +63,7 @@ function anonPut(page, path, value) {
 function authedPut(page, alias, path, value) {
     const hashed = crypto.createHash('sha256').update(PASSWORD).digest('hex');
     return page.evaluate(({ alias, hashed, path, value, relay }) => new Promise((resolve) => {
-        const gun = window.Gun({ peers: [relay], localStorage: false });
+        const gun = window.Gun({ peers: [relay], localStorage: false, RTCPeerConnection: false });
         gun.user().auth(alias, hashed, (ack) => {
             if (ack.err) { resolve('auth failed: ' + ack.err); return; }
             path.reduce((n, k) => n.get(k), gun).put(value, (a) => resolve(a.err ? String(a.err) : null));
@@ -73,7 +77,7 @@ function authedPut(page, alias, path, value) {
 // null when the node is missing or tombstoned.
 function stored(page, path) {
     return page.evaluate(({ path, relay }) => new Promise((resolve) => {
-        const gun = window.Gun({ peers: [relay], localStorage: false });
+        const gun = window.Gun({ peers: [relay], localStorage: false, RTCPeerConnection: false });
         path.reduce((n, k) => n.get(k), gun).once((v) => resolve(v === undefined ? null : v));
         setTimeout(() => resolve(null), 5000);
     }), { path, relay: RELAY });
@@ -82,7 +86,7 @@ function stored(page, path) {
 // The field names of the node at path, meta key excluded.
 function storedKeys(page, path) {
     return page.evaluate(({ path, relay }) => new Promise((resolve) => {
-        const gun = window.Gun({ peers: [relay], localStorage: false });
+        const gun = window.Gun({ peers: [relay], localStorage: false, RTCPeerConnection: false });
         path.reduce((n, k) => n.get(k), gun).once((node) => resolve(node ? Object.keys(node).filter((k) => k !== '_') : []));
         setTimeout(() => resolve([]), 5000);
     }), { path, relay: RELAY });
@@ -111,10 +115,9 @@ test.beforeAll(async ({ browser }) => {
     await victim.getByPlaceholder("What's on your mind?").fill('victim post');
     await victim.getByRole('button', { name: 'Post' }).click();
     await expect(victim.getByText('victim post')).toBeVisible();
-    // The composer does not wait for the relay's ack yet, so wait for the post
-    // to be stored before the next navigation reloads the page.
-    await expect.poll(async () => (await storedKeys(victim, ['~' + victimPub, 'posts'])).find((k) => /^\d+-/.test(k)))
-        .toBeTruthy();
+    // The composer clears once the relay has stored the post, so the next
+    // navigation's reload cannot lose it.
+    await expect(victim.getByPlaceholder("What's on your mind?")).toHaveValue('');
 
     await victim.goto('/user/' + VICTIM);
     await victim.getByRole('button', { name: 'Edit Profile' }).click();

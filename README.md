@@ -7,7 +7,7 @@ Accounts, signatures and end-to-end encryption use SEA, GunDB's cryptography lay
 
 ## Features
 - Accounts with a profile picture and a bio
-- Posts with text and/or an image; a feed of the people you follow; deleting your own posts
+- Posts with text and/or an image, kept in the composer until the relay has stored them; a feed of the people you follow; deleting your own posts, which disappear from other users' screens right away
 - Following and unfollowing users
 - Finding users by their exact name, and searching the posts of the people you follow by text
 - End-to-end encrypted direct messages, and blocking users
@@ -108,11 +108,11 @@ Data written before the ownership redesign (October 2026) used shared nodes keye
 - `src/wejure/common.cljs`: session and IPFS helpers
 - `src/wejure/components/`: one namespace per page, plus the navigation bar and `postCard.cljs`, the post list shared by the feed, profile and post-search pages
 - `src/wejure/components/textField.cljs`: the MUI text field every page uses; it keeps the caret in place while typing
-- `src/wejure/js/`: the GunDB layer, called from ClojureScript with callbacks or promises: `db.js` (the shared GunDB instance), `records.js` (the stored record formats), `account.js`, `profile.js`, `post.js`, `chat.js`; and `relay.js`, the relay server
-- `test/e2e/`: the end-to-end tests: `wejure.spec.js` (every page, two users) and `security.spec.js` (data ownership)
+- `src/wejure/js/`: the GunDB layer, called from ClojureScript with callbacks or promises: `db.js` (the shared GunDB instance, plus helpers for writes the relay confirms and for subscriptions a page stops when it closes), `records.js` (the stored record formats), `account.js`, `profile.js`, `post.js`, `chat.js`; and `relay.js`, the relay server
+- `test/e2e/`: the end-to-end tests: `wejure.spec.js` (every page, two users), `security.spec.js` (data ownership) and `reliability.spec.js` (posts the relay does not confirm, deletions reaching other users, chat subscriptions ending with the conversation)
 
 ## Testing
-`yarn test:e2e` builds the release version and runs a browser test through every page with two users, plus tests that anonymous clients and other logged-in users cannot change anyone else's data. Install its browser once with `npx playwright install chromium`. The test starts its own relay (with empty data), an IPFS stand-in and a web server, on the ports the app uses (8001, 5001 and 8080, 8020), so stop any IPFS daemon, relay or dev server first.
+`yarn test:e2e` builds the release version and runs a browser test through every page with two users, plus tests that anonymous clients and other logged-in users cannot change anyone else's data, and tests of posting while the relay is unreachable, of deletions reaching other users and of chat subscriptions ending with the conversation. Install its browser once with `npx playwright install chromium`. The test starts its own relay (with empty data), an IPFS stand-in and a web server, on the ports the app uses (8001, 5001 and 8080, 8020), so stop any IPFS daemon, relay or dev server first.
 
 ## Deleting all data
 1. Clear the site data (local storage) in every browser that opened WeJure.
