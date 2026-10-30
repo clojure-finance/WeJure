@@ -196,6 +196,8 @@ test('leaving a conversation stops decrypting its messages', async ({ browser })
     expect(await listenerPage.evaluate(() => window.decryptions)).toBeGreaterThan(0);
 
     await goHome(listenerPage);
+    // Still the instrumented page: a reload would make the count trivially 0.
+    expect(await listenerPage.evaluate(() => typeof window.decryptions)).toBe('number');
     await listenerPage.evaluate(() => { window.decryptions = 0; });
     await send(talkerPage, 'two');
     await listenerPage.waitForTimeout(2000);

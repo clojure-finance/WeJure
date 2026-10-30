@@ -3,7 +3,8 @@ import { gun, user, acked } from './db';
 import * as records from './records';
 import { lookupPubs } from './profile';
 
-// Existing accounts were created with SHA-256-hashed passwords, so keep hashing.
+// SEA sees passwords SHA-256-hashed, as in the original app (security.spec.js
+// hashes the same way when it logs in directly).
 function hashPassword(password) {
     return CryptoJS.SHA256(password).toString(CryptoJS.enc.Hex);
 }

@@ -12,9 +12,7 @@
 (defn search-page [{{:keys [search-input]} :path-params}]
   (let [results (r/atom [])]                                         ;; [{:username :pub :icon_cid}], exact matches only
     (profile/searchUser search-input
-                        (fn [result exact?]
-                          (let [result (js->clj result :keywordize-keys true)]
-                            (swap! results #(if exact? (into [result] %) (conj % result))))))
+                        #(swap! results conj (js->clj % :keywordize-keys true)))
     (fn [{{:keys [search-input]} :path-params}]
       [:div
        {:style {:margin "25px 20% 25px 20%"}}

@@ -51,14 +51,14 @@ export function unfollowUser(pub) {
     user.get("follows").get(pub).put(null);
 }
 
-// Exact-alias user search: onResult({username, pub, icon_cid}, exactMatch) is
-// called once per account claiming the alias (normally at most one).
+// Exact-alias user search: onResult({username, pub, icon_cid}) is called once
+// per account claiming the alias (normally at most one).
 export function searchUser(query, onResult) {
     lookupPubs(query).then((pubs) => {
         for (const pub of pubs) {
             userNode(pub).get("profile").once((profile) => {
                 if (profile && records.aliasOf(profile) === query) {
-                    onResult(records.userSearchResult(records.aliasOf(profile), pub, records.iconCIDOf(profile)), true);
+                    onResult(records.userSearchResult(records.aliasOf(profile), pub, records.iconCIDOf(profile)));
                 }
             });
         }

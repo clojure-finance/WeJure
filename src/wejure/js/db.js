@@ -15,17 +15,19 @@ export const gun = GUN({ peers: ["http://localhost:8001/gun"] });
 // under "pair"; core.cljs treats its presence as "logged in".
 export const user = gun.user().recall({ sessionStorage: true });
 
-// Resolves once a peer (normally the relay) has stored the put of value at
-// node; rejects when a peer refuses it or none answers within timeoutMs. Gun
+// Resolves once a relay has stored the put of value at node; rejects when this
+// client or a relay refuses it, or no relay answers within timeoutMs. Gun
 // calls a put's callback once per ack: first for its own in-memory graph,
-// which proves nothing about the relay, then once per peer, and only peer
-// acks carry the peer in ack._.via. With the default {acks: 1} the callback
-// would see nothing but the local ack.
+// then once per peer, with the peer in ack._.via. Relays (the peers above)
+// have a url; WebRTC peers are other browsers, which do not pass old writes
+// on to a relay later, so their acks prove nothing either. With the default
+// {acks: 1} the callback would see nothing but the local ack.
 export function acked(node, value, timeoutMs = 10000) {
     return new Promise((resolve, reject) => {
         const timer = setTimeout(() => reject(new Error("No answer from the relay.")), timeoutMs);
         node.put(value, (ack) => {
-            if (!ack.err && !(ack._ && ack._.via)) return;      // the local ack
+            const via = ack._ && ack._.via;
+            if (via ? !via.url : !ack.err) return;               // a browser's ack, or the local one
             clearTimeout(timer);
             if (ack.err) reject(new Error(ack.err)); else resolve();
         }, { acks: 9 });
