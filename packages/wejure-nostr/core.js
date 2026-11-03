@@ -36,6 +36,13 @@ export function checkEvent(e) {
     return true;
 }
 
+// Marks e as checked, for events from a trusted place (the encrypted device
+// cache, which holds only events that were checked when they arrived).
+export function trust(e) {
+    checked.add(e);
+    verified.add(e.id + e.sig);
+}
+
 // The entries of a relay list that are relay URLs. Relay lists come from other
 // people (bundles, settings, NIP-65 lists); anything else would make the pool
 // throw or hang.

@@ -81,10 +81,13 @@ together with the server, also at http://localhost:8020.
   needs a majority of them, so with three or more owners, one lost or rogue
   owner can neither take over nor freeze the community.
 - **The device cache**: each gift wrap and envelope is decrypted and checked
-  once. The results are kept in IndexedDB, one database per account,
-  encrypted (AES-GCM) with a key derived from the account key. That key is
+  once. The results, and the copies of relay data that let a page load fetch
+  only what is new (see Fetching), are kept in IndexedDB, one database per
+  account, encrypted (AES-GCM) with a key derived from the account key. Which
+  filters and values the copies belong to is stored only as an HMAC. That key is
   only in the logged-in tab, so the cache is unreadable without the
-  password. Logging out deletes the database. Every event is checked against
+  password. Logging out deletes the database, and other tabs of the account
+  then close it and carry on in memory. Every event is checked against
   its id (the hash of its content), so a relay cannot slip other content in
   under an id the cache already knows.
 - **Public data**: profiles, posts, follows, relay lists, and everything in
@@ -122,13 +125,16 @@ IndexedDB (`wejure-<public key>`, encrypted; see Security).
 
 ## Fetching
 Direct messages, community operations and channel messages are read through
-mirrors (`sync.js`): the first read in a page session fetches everything,
-page by page, and opens one live subscription per mirror and relay. After
-that, a read asks each relay only to confirm it has sent everything so far
-(one empty round trip), and new events arrive through the subscription. If a
-subscription drops, the next read catches up from the newest event that relay
-had sent, less a minute for slow clocks (two days for gift wraps, which are
-backdated on purpose). A community's state is computed again only when new
+mirrors (`sync.js`): the first read fetches everything, page by page, and
+opens one live subscription per mirror and relay, which stays open for the
+page session. After that, a read asks each relay only to confirm it has sent
+everything so far (one empty round trip), and new events arrive through the
+subscription. If a subscription drops, the next read catches up from the
+newest event that relay had sent, less a minute for slow clocks (two days for
+gift wraps, which are backdated on purpose). The copies are saved in the
+device cache, so after a page load the first read catches up the same way
+instead of fetching everything, and a community whose relays are all down
+still opens. A community's state is computed again only when new
 operations arrive. `npm run bench` shows the effect: with 600 messages and 200
 direct messages, a member's page update when a message arrives went from
 about 4500 events and 160 ms to 1 event and 10 ms.
@@ -142,7 +148,7 @@ about 4500 events and 160 ms to 1 event and 10 ms.
   - `core.js`: publishing to several relays, merged reads, repair;
   - `sync.js`: mirrors, local copies of relay data kept current by live subscriptions (see Fetching);
   - `account.js`, `social.js`, `media.js`, `session.js`, `live.js`;
-  - `cache.js`: decrypted events, in memory and in IndexedDB;
+  - `cache.js`: decrypted events, in memory and in IndexedDB, and the saved mirrors;
   - `community-state.js`: the community rules, pure;
   - `communities.js`: the community input and output.
 - `server/`: `index.js` (app, relay and media server on one port), `store.js` (the relay's event store on `node:sqlite`), `blossom.js` (the media server)
@@ -151,9 +157,10 @@ about 4500 events and 160 ms to 1 event and 10 ms.
 - `test/e2e/`: browser tests of the release build
 
 ## Testing
-- `npm test`: the Node tests (about 30 s). They cover accounts, the feed,
+- `npm test`: the Node tests (about 35 s). They cover accounts, the feed,
   messages, media, redundancy across crashing relays, live updates, fetching
-  only what is new, and the community rules and attacks on them.
+  only what is new (with saved copies, on fake-indexeddb), and the community
+  rules and attacks on them.
 - `npm run test:e2e`: builds the release version and runs Playwright through
   every page with several users, communities included (about 1 min). It
   fails on any console error. Install its browser once with
@@ -172,8 +179,6 @@ site's stored data.
 ## Status
 The project is under development. Not built yet:
 - unblocking;
-- keeping fetched events across page loads: each page session fetches
-  everything once (decrypting is cached across loads, transfer is not);
 - relays syncing with each other (NIP-77); clients repair their own data
   instead (see Configuration);
 - deleting media;

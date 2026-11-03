@@ -21,8 +21,13 @@
 // mark (a sender whose clock is several minutes slow, say) is missed until the
 // next page load; a relay that sends new events to subscribers only after
 // acknowledging them makes a sync miss what was published just before it.
+//
+// In browsers, each mirror bucket (a value's events, and its marks) is saved
+// in the encrypted device cache (cache.js), so after a page load the first
+// sync catches up from the saved marks instead of fetching everything.
 import { matchFilter } from 'nostr-tools/filter';
-import { checkEvent, chunked, lateness, onPublish, relayUrls } from './core.js';
+import { checkEvent, chunked, lateness, onPublish, relayUrls, trust } from './core.js';
+import { cacheOf } from './cache.js';
 
 const PAGE = 500;
 // A page this long may have more behind it. Relays cap results at their own
@@ -32,6 +37,7 @@ const MAYBE_MORE = 100;
 const FILTERS_PER_SUBSCRIPTION = 10;
 const MAX_WAIT = 3000;
 const NOTHING = { ids: ['0'.repeat(64)], limit: 1 };
+const SAVE_AFTER = 500;   // ms: changes to a bucket are saved together
 
 // Subscribes to filters at a relay. Resolves with the subscription once the
 // relay has sent what it holds (EOSE), or with null if it does not answer in
@@ -125,9 +131,14 @@ function barrier(pool, url) {
     return barriers.get(url);
 }
 
-function createMirror(pool, base, field) {
+// store: {loadBucket, saveBucket} (cache.js), or null to keep nothing.
+function createMirror(pool, base, field, store) {
     const buckets = new Map();   // value -> Map id -> event
     const relays = new Map();    // url -> {marks, covered, live, queue}
+    const loads = new Map();     // value -> promise of its saved bucket being loaded
+    const unsaved = new Map();   // value -> events not saved yet (marks are saved whole)
+    let saving = null;           // the timer of the next save
+    let saved = Promise.resolve();   // saves run one at a time, so marks never land before their events
     const tagName = field.startsWith('#') ? field.slice(1) : null;
     const valuesOf = (e) => (tagName ? e.tags.filter((t) => t[0] === tagName).map((t) => t[1]) : [e.pubkey]);
     const now = () => Math.floor(Date.now() / 1000);
@@ -144,16 +155,70 @@ function createMirror(pool, base, field) {
         return relays.get(url);
     };
 
+    const nameOf = (v) => JSON.stringify([base, field, v]);
+
+    // Saves the buckets that changed: their new events, and all their marks.
+    function save() {
+        clearTimeout(saving);
+        saving = null;
+        saved = saved.then(() => {
+            const changes = [...unsaved];
+            unsaved.clear();
+            return Promise.all(changes.map(async ([v, events]) => {
+                const marks = Object.fromEntries([...relays].filter(([, r]) => r.marks.has(v)).map(([url, r]) => [url, r.marks.get(v)]));
+                // not saved (storage full, say): the events go with the next save
+                if (!(await store.saveBucket(nameOf(v), events, marks))) unsaved.set(v, [...events, ...(unsaved.get(v) ?? [])]);
+            }));
+        }).catch((err) => console.warn('could not save a mirror:', err));
+        return saved;
+    }
+
+    function changed(v, e) {
+        if (!store) return;
+        if (!unsaved.has(v)) unsaved.set(v, []);
+        if (e) unsaved.get(v).push(e);
+        saving ??= setTimeout(save, SAVE_AFTER);
+    }
+
+    // Starts following v: its bucket, filled from the saved copy if there is one.
+    function load(v) {
+        if (!loads.has(v)) {
+            buckets.set(v, new Map());
+            loads.set(v, (async () => {
+                if (!store) return;
+                const { events, marks } = await store.loadBucket(nameOf(v));
+                for (const e of events) {
+                    trust(e);
+                    buckets.get(v).set(e.id, e);
+                }
+                for (const [url, mark] of Object.entries(marks)) {
+                    const r = at(url);
+                    r.marks.set(v, Math.max(r.marks.get(v) ?? 0, mark));
+                }
+            })().catch((err) => console.warn('could not load a mirror:', err)));
+        }
+        return loads.get(v);
+    }
+
     // Files e under the values it matches that the mirror follows; returns them.
     function add(e) {
         if (!matchFilter(base, e)) return [];
         const vs = valuesOf(e).filter((v) => buckets.has(v));
-        for (const v of vs) buckets.get(v).set(e.id, e);
+        for (const v of vs) {
+            if (buckets.get(v).has(e.id)) continue;
+            buckets.get(v).set(e.id, e);
+            changed(v, e);
+        }
         return vs;
     }
 
     function advance(r, values, newest, sentBy) {
-        for (const v of values) r.marks.set(v, Math.max(r.marks.get(v) ?? 0, Math.min(sentBy, newest.get(v) ?? 0)));
+        for (const v of values) {
+            const mark = Math.max(r.marks.get(v) ?? 0, Math.min(sentBy, newest.get(v) ?? 0));
+            if (mark === r.marks.get(v)) continue;
+            r.marks.set(v, mark);
+            changed(v);
+        }
     }
 
     function drop(r, live) {
@@ -238,7 +303,7 @@ function createMirror(pool, base, field) {
 
     async function sync(urls, values) {
         values = [...new Set(values)];
-        for (const v of values) if (!buckets.has(v)) buckets.set(v, new Map());
+        await Promise.all(values.map(load));
         await Promise.all(relayUrls(urls).map((url) => {
             const r = at(url);
             r.queue = r.queue.then(() => step(url, values)).catch((e) => console.warn('sync failed:', e));
@@ -249,7 +314,7 @@ function createMirror(pool, base, field) {
         return [...out.values()];
     }
 
-    return { add, sync };
+    return { add, sync, save: () => (store ? save() : Promise.resolve()) };
 }
 
 // Every event on relays matching base whose `field` is one of values: what
@@ -258,8 +323,13 @@ function createMirror(pool, base, field) {
 export function synced(s, relays, base, field, values) {
     const { mirrors } = registry(s.pool);
     const key = JSON.stringify([base, field]);
-    if (!mirrors.has(key)) mirrors.set(key, createMirror(s.pool, base, field));
+    if (!mirrors.has(key)) mirrors.set(key, createMirror(s.pool, base, field, s.sk ? cacheOf(s) : null));
     return mirrors.get(key).sync(relays, values);
+}
+
+// Saves what the session's mirrors have not saved yet, now.
+export async function saveMirrors(s) {
+    await Promise.all([...(registries.get(s.pool)?.mirrors.values() ?? [])].map((m) => m.save()));
 }
 
 // Hands an event that arrived some other way (published by us, or from another
