@@ -200,7 +200,9 @@ test('leaving the chat page stops its subscription to incoming messages', async 
     const before = wrapsPushed;
     await send(talkerPage, 'two');
     await listenerPage.waitForTimeout(2000);
-    expect(wrapsPushed).toBe(before);
+    // once, to the session's copy of its gift wraps (sync.js), which stays
+    // subscribed while the page lives; the chat page's subscription is gone
+    expect(wrapsPushed - before).toBe(1);
 
     // Reopening the conversation reads it in full, each message once.
     await listenerPage.getByRole('link', { name: 'Message' }).click();

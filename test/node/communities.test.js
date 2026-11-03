@@ -26,6 +26,25 @@ async function forgeEnvelope(key, inner) {
         content: nip44.encrypt(JSON.stringify(inner), hexToBytes(key)) }, generateSecretKey());
 }
 
+// Counts the requests for community ops that s sends to relays from now on.
+function countOpRequests(s) {
+    const count = { requests: 0 };
+    const ensure = s.pool.ensureRelay.bind(s.pool);
+    s.pool.ensureRelay = async (url, opts) => {
+        const relay = await ensure(url, opts);
+        if (!relay.counting) {
+            const subscribe = relay.subscribe.bind(relay);
+            relay.subscribe = (filters, params) => {
+                if (filters.some((f) => f.kinds?.includes(KIND.COMMUNITY_OP) && !f.authors && !f.ids)) count.requests++;
+                return subscribe(filters, params);
+            };
+            relay.counting = true;
+        }
+        return relay;
+    };
+    return count;
+}
+
 // Accepts the invitation to ref (if there is one) and opens the community as s.
 async function enter(s, ref) {
     const { invitations } = await C.myCommunities(s);
@@ -249,6 +268,25 @@ describe('communities', () => {
         const plain = await query(pool, relays, { kinds: [KIND.COMMUNITY_MESSAGE], '#h': [club.ref] });
         pool.destroy();
         assert.ok(plain.every((e) => e.content !== 'secret plan'), 'the private channel is encrypted');
+    });
+
+    test('reloading: unchanged ops reuse the state, and a burst of reads shares reloads yet sees every earlier change', async () => {
+        const choir = await C.createCommunity(alice, { name: 'Choir' });
+        const general = C.channelByName(choir, 'general');
+        await C.addMember(choir, dave.pk);
+        const d = await enter(dave, choir.ref);
+        const state = d.state;
+        await C.refresh(d);
+        assert.equal(d.state, state, 'no new ops, so the state is not computed again');
+
+        await C.updateSettings(choir, { name: 'Chamber Choir' });
+        await C.sendMessage(choir, general, 'rehearsal', 'monday at 7');
+        const count = countOpRequests(dave);
+        const reads = await Promise.all([C.refresh(d), C.readChannel(d, general), C.topics(d, general), C.readChannel(d, general)]);
+        assert.equal(d.state.name, 'Chamber Choir');
+        assert.deepEqual(texts(reads[1]), ['monday at 7']);
+        assert.deepEqual(texts(reads[3]), ['monday at 7']);
+        assert.ok(count.requests <= 2 * relays.length, `${count.requests / relays.length} reloads for four reads`);
     });
 
     test('relays crash, and a new device finds its private and open communities on the rest', async () => {

@@ -17,18 +17,23 @@ export const KIND = {
 
 // Whether an event is intact: well formed (string content, string tags, ...),
 // its id the hash of its content (so a relay cannot pass off other content
-// under a known id, which the cache keys on) and its signature valid. Gift wraps and envelopes are signed by one-time
-// keys, so their outer signature proves nothing and is skipped; what they carry
-// is checked after decryption. Valid signatures are remembered, so an event
-// seen again (from another relay, or in the next query) costs only the hash.
+// under a known id, which the cache keys on) and its signature valid. Gift
+// wraps and envelopes are signed by one-time keys, so their outer signature
+// proves nothing and is skipped; what they carry is checked after decryption.
+// Valid signatures are remembered, so an event seen again (from another relay,
+// or in the next query) costs only the hash, and an event object that passed
+// (the pool checks what relays send, then the readers check it again) costs nothing.
 const verified = new Set();
+const checked = new WeakSet();
 export function checkEvent(e) {
+    if (checked.has(e)) return true;
     try { if (!validateEvent(e) || getEventHash(e) !== e.id) return false; } catch { return false; }
-    if (e.kind === KIND.GIFT_WRAP || e.kind === KIND.ENVELOPE) return true;
-    if (verified.has(e.id + e.sig)) return true;
-    const ok = verifyEvent(e);
-    if (ok) verified.add(e.id + e.sig);
-    return ok;
+    if (e.kind !== KIND.GIFT_WRAP && e.kind !== KIND.ENVELOPE && !verified.has(e.id + e.sig)) {
+        if (!verifyEvent(e)) return false;
+        verified.add(e.id + e.sig);
+    }
+    checked.add(e);
+    return true;
 }
 
 // The entries of a relay list that are relay URLs. Relay lists come from other
@@ -40,6 +45,12 @@ export function relayUrls(list) {
         try { return typeof u === 'string' && ['ws:', 'wss:'].includes(new URL(u).protocol); } catch { return false; }
     }))];
 }
+
+// How far before its arrival an event matching filter can be dated, in seconds:
+// a minute for clocks that run behind, plus two days for gift wraps, which are
+// backdated at random by up to that much (NIP-59). Catching up with a relay
+// (live.js, sync.js) asks for this much before the last event it sent.
+export const lateness = (filter) => (filter.kinds?.includes(KIND.GIFT_WRAP) ? 2 * 24 * 3600 : 0) + 60;
 
 // Relays refuse filters with very long lists (NIP-01 leaves the limit to them),
 // so lists of ids, authors or tag values are sent in chunks.
@@ -73,6 +84,13 @@ export function sign(s, template) {
 // prev (the version it replaces), whichever clock dated that one.
 export const after = (prev) => Math.max(Math.floor(Date.now() / 1000), (prev?.created_at ?? 0) + 1);
 
+// Calls fn(event) for every event a relay stores through publish() on pool.
+const publishHooks = new WeakMap();
+export function onPublish(pool, fn) {
+    if (!publishHooks.has(pool)) publishHooks.set(pool, []);
+    publishHooks.get(pool).push(fn);
+}
+
 // Sends event to every relay. Resolves with which relays stored it once at least
 // minAcks did; rejects otherwise. A relay that is down simply counts as failed.
 export async function publish(pool, relays, event, { minAcks = 1, maxWait = 3000 } = {}) {
@@ -83,6 +101,7 @@ export async function publish(pool, relays, event, { minAcks = 1, maxWait = 3000
     if (stored.length < minAcks) {
         throw new Error(`stored on ${stored.length} of ${relays.length} relays, needed ${minAcks}`);
     }
+    if (stored.length) for (const fn of publishHooks.get(pool) ?? []) fn(event);
     return { stored, failed };
 }
 

@@ -95,9 +95,9 @@ together with the server, also at http://localhost:8020.
 - **Limits**: a stolen account key reveals what that account could read (no
   forward secrecy). Deletions are requests: relays that ignore NIP-09 may
   keep a deleted post, though WeJure hides it once any relay has the
-  request. Reads ask for at most 5000 events at a time, so a flood of gift
-  wraps to one user can push older direct messages and community keys out of
-  view.
+  request. A flood of gift wraps or community events cannot hide older ones
+  (reads page through everything), but it costs download time on the first
+  read of a session.
 
 ## Data model
 Everything is a Nostr event (NIP-01). The kinds WeJure uses:
@@ -120,6 +120,19 @@ The browser keeps the login in `sessionStorage` (`wejure-session`), so a reload
 stays logged in and closing the tab logs out. Decrypted events are cached in
 IndexedDB (`wejure-<public key>`, encrypted; see Security).
 
+## Fetching
+Direct messages, community operations and channel messages are read through
+mirrors (`sync.js`): the first read in a page session fetches everything,
+page by page, and opens one live subscription per mirror and relay. After
+that, a read asks each relay only to confirm it has sent everything so far
+(one empty round trip), and new events arrive through the subscription. If a
+subscription drops, the next read catches up from the newest event that relay
+had sent, less a minute for slow clocks (two days for gift wraps, which are
+backdated on purpose). A community's state is computed again only when new
+operations arrive. `npm run bench` shows the effect: with 600 messages and 200
+direct messages, a member's page update when a message arrives went from
+about 4500 events and 160 ms to 1 event and 10 ms.
+
 ## Code layout
 - `src/wejure/core.cljs`: routes, and redirects between logged-in and logged-out pages
 - `src/wejure/common.cljs`: session helpers, and avatars and pictures loaded through the data layer
@@ -127,6 +140,7 @@ IndexedDB (`wejure-<public key>`, encrypted; see Security).
 - `packages/wejure-nostr/`: the data layer, a local npm package (`file:` dependency). It must stay outside the ClojureScript source paths, because release builds would rename its property names otherwise. Each module:
   - `app.js`: what the screens call; it returns plain objects;
   - `core.js`: publishing to several relays, merged reads, repair;
+  - `sync.js`: mirrors, local copies of relay data kept current by live subscriptions (see Fetching);
   - `account.js`, `social.js`, `media.js`, `session.js`, `live.js`;
   - `cache.js`: decrypted events, in memory and in IndexedDB;
   - `community-state.js`: the community rules, pure;
@@ -137,16 +151,18 @@ IndexedDB (`wejure-<public key>`, encrypted; see Security).
 - `test/e2e/`: browser tests of the release build
 
 ## Testing
-- `npm test`: the Node tests (about 25 s). They cover accounts, the feed,
-  messages, media, redundancy across crashing relays, live updates, and the
-  community rules and attacks on them.
+- `npm test`: the Node tests (about 30 s). They cover accounts, the feed,
+  messages, media, redundancy across crashing relays, live updates, fetching
+  only what is new, and the community rules and attacks on them.
 - `npm run test:e2e`: builds the release version and runs Playwright through
   every page with several users, communities included (about 1 min). It
   fails on any console error. Install its browser once with
   `npx playwright install chromium`. It starts its own server with empty
   data on port 8020, so stop any WeJure server there first.
-- `npm run bench`: times loading, reading and sending in a community of 30
-  members and 300 messages (arguments: messages, members).
+- `npm run bench`: times loading, reading and sending in a community, and
+  counts the events relays send for each (arguments: messages, default 300;
+  members, 30; direct messages, 200). It also times computing the state of
+  1000 and 5000 operations.
 
 ## Deleting all data
 Stop the server and delete its `data/` directory. Logins live only in the
@@ -156,8 +172,8 @@ site's stored data.
 ## Status
 The project is under development. Not built yet:
 - unblocking;
-- fetching only what is new: every view still downloads all of its events
-  from the relays (decrypting is cached, transfer is not);
+- keeping fetched events across page loads: each page session fetches
+  everything once (decrypting is cached across loads, transfer is not);
 - relays syncing with each other (NIP-77); clients repair their own data
   instead (see Configuration);
 - deleting media;

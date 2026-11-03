@@ -2,12 +2,10 @@
 // the filters, and returns a function that stops it. Filters use `limit: 0`
 // ("nothing stored, only what arrives from now on"), so callers load the past
 // themselves. If every relay connection drops, it starts over after a pause,
-// asking for what arrived during the gap too.
-import { KIND, chunked, relayUrls } from './core.js';
-
-// Gift wraps are dated up to two days in the past (NIP-59), so catching up on
-// them needs that much slack.
-const slack = (filter) => (filter.kinds?.includes(KIND.GIFT_WRAP) ? 2 * 24 * 3600 : 0) + 60;
+// asking for what arrived during the gap too. Every event received is also
+// handed to the session's mirrors (sync.js).
+import { chunked, lateness, relayUrls } from './core.js';
+import { offer } from './sync.js';
 
 export function subscribe(s, filters, onEvent, relays = s.relays) {
     relays = relayUrls(relays);
@@ -19,10 +17,11 @@ export function subscribe(s, filters, onEvent, relays = s.relays) {
     if (!relays.length) return () => {};
     const start = () => {
         closers = filters.flatMap(chunked).map((filter) => s.pool.subscribe(relays,
-            droppedAt === null ? { ...filter, limit: 0 } : { ...filter, since: droppedAt - slack(filter) }, {
+            droppedAt === null ? { ...filter, limit: 0 } : { ...filter, since: droppedAt - lateness(filter) }, {
                 onevent: (e) => {
                     if (seen.has(e.id)) return;   // the same event from several relays
                     seen.add(e.id);
+                    offer(s.pool, e);
                     onEvent(e);
                 },
                 onclose: () => {

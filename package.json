@@ -7,7 +7,7 @@
     "start": "node server/index.js",
     "dev": "node scripts/dev.js",
     "release": "shadow-cljs release app",
-    "test": "node --test --test-concurrency=1 'test/node/*.test.js'",
+    "test": "node --test --test-concurrency=1 --test-force-exit 'test/node/*.test.js'",
     "test:e2e": "shadow-cljs release app && playwright test -c test/e2e",
     "bench": "node test/bench/community.bench.mjs"
   },

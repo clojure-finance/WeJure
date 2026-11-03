@@ -10,16 +10,25 @@ import { wrapEvent } from 'nostr-tools/nip59';
 import { hexToBytes } from 'nostr-tools/utils';
 import { KIND, after, checkEvent, latest, publish, query, randomHex, relayUrls, sha256Hex, sign } from './core.js';
 import { decryptAll } from './cache.js';
+import { synced } from './sync.js';
 import { relaysOf } from './account.js';
 import { unwrapAll } from './social.js';
 import { resolve } from './community-state.js';
 import { debounce, subscribe } from './live.js';
 
 const utf8 = (s) => new TextEncoder().encode(s);
+// fn with its results remembered (for hashes, asked for again on every reload)
+const remembered = (fn) => {
+    const known = new Map();
+    return (x) => {
+        if (!known.has(x)) known.set(x, fn(x));
+        return known.get(x);
+    };
+};
 // A key's public id (named in key ops) and the relay tag of what it encrypts are
 // different hashes, so knowing an id does not reveal where the messages are.
-const keyIdOf = (key) => sha256Hex(utf8(`wejure-key-id:${key}`));
-const tagOf = (key) => sha256Hex(utf8(`wejure-envelope:${key}`));
+const keyIdOf = remembered((key) => sha256Hex(utf8(`wejure-key-id:${key}`)));
+const tagOf = remembered((key) => sha256Hex(utf8(`wejure-envelope:${key}`)));
 const union = (...lists) => relayUrls(lists.flat());   // relay lists, cleaned (they come from other people)
 
 async function envelope(key, inner) {
@@ -35,7 +44,7 @@ async function envelope(key, inner) {
 async function openEnvelopes(s, relays, keys, kind) {
     if (!keys.length) return [];
     const byTag = new Map(await Promise.all(keys.map(async (k) => [await tagOf(k.key), k.key])));
-    const envs = await query(s.pool, relays, { kinds: [KIND.ENVELOPE], '#h': [...byTag.keys()], limit: 5000 });
+    const envs = await synced(s, relays, { kinds: [KIND.ENVELOPE] }, '#h', [...byTag.keys()]);
     // each envelope is decrypted and its content's signature checked once (cache.js)
     const inners = await decryptAll(s, envs, (env) => {
         const key = byTag.get(env.tags.find((t) => t[0] === 'h')?.[1]);
@@ -103,22 +112,25 @@ export async function accept(s, invitation) {
 
 // ---- loading ----
 
-export async function openCommunity(s, ref, { relays } = {}) {
+// `known`: an earlier context of the same community. Ops are never withdrawn,
+// so its ops carry over, and if none have arrived since, so does its state.
+export async function openCommunity(s, ref, { relays, known } = {}) {
     const b = (await bundles(s)).get(ref);
     const listed = (await readList(s)).find((e) => e.ref === ref);
     const where = union(relays ?? [], b?.relays ?? [], listed?.relays ?? []);
     const rels = where.length ? where : s.relays;
     const bundled = [...(b?.keys ?? new Map()).entries()];   // [keyId, key]
     const founder = ref.split(':')[0];
-    // The founder's ops are asked for separately, so that a flood of ops from
-    // others (anyone can tag an open community) cannot push the genesis op out
-    // of a relay's result limit.
+    // On the first open the founder's ops are asked for separately too, so that
+    // a flood of ops from others (anyone can tag an open community), all dated
+    // the same second, cannot crowd the genesis op out of the pages (sync.js).
     const [plain, founders, sealed] = await Promise.all([
-        query(s.pool, rels, { kinds: [KIND.COMMUNITY_OP], '#h': [ref], limit: 5000 }),
-        query(s.pool, rels, { kinds: [KIND.COMMUNITY_OP], '#h': [ref], authors: [founder], limit: 5000 }),
+        synced(s, rels, { kinds: [KIND.COMMUNITY_OP] }, '#h', [ref]),
+        known ? [] : query(s.pool, rels, { kinds: [KIND.COMMUNITY_OP], '#h': [ref], authors: [founder], limit: 5000 }),
         openEnvelopes(s, rels, bundled.map(([, key]) => ({ key })), KIND.COMMUNITY_OP),
     ]);
-    const ops = new Map([...plain, ...founders, ...sealed].map((e) => [e.id, e]));
+    const ops = new Map(known?.ops);
+    for (const e of [...plain, ...founders, ...sealed]) ops.set(e.id, e);
     // Plaintext parents that the limits left out are fetched by id.
     for (let round = 0; round < 5; round++) {
         const missing = [...new Set([...ops.values()].flatMap((e) => e.tags.filter((t) => t[0] === 'parent').map((t) => t[1])))]
@@ -127,24 +139,30 @@ export async function openCommunity(s, ref, { relays } = {}) {
         if (!more.length) break;
         for (const e of more) ops.set(e.id, e);
     }
-    const state = resolve(ref, [...ops.values()]);
+    const state = known && known.ops.size === ops.size ? known.state : resolve(ref, [...ops.values()]);
     if (!state) throw new Error('community not found, or no access');
     // Keys count only if a valid key op names them, and their scope is the one
     // that op gives: keys authenticate themselves through the log.
     const scopeOf = new Map([...state.keyOps].flatMap(([scope, ks]) => ks.map((k) => [k.keyId, scope])));
     const keys = new Map(bundled.filter(([id]) => scopeOf.has(id)).map(([id, key]) => [id, { scope: scopeOf.get(id), key }]));
-    return { s, ref, relays: union(state.relays.length ? state.relays : rels), state, keys };
+    return { s, ref, relays: union(state.relays.length ? state.relays : rels), state, keys, ops };
 }
 
-// Reloads ctx. Reloads can overlap (a watcher and an action, say); a result
-// replaces ctx only if no reload that started later has already done so.
-async function reload(ctx) {
-    const started = ctx.reloads = (ctx.reloads ?? 0) + 1;
-    const fresh = await openCommunity(ctx.s, ctx.ref, { relays: ctx.relays });
-    if (started > (ctx.applied ?? 0)) {
-        Object.assign(ctx, fresh);
-        ctx.applied = started;
+// Reloads ctx. Reloads run one at a time: a call made while one runs waits for
+// it, then shares the next one with every other call made meanwhile. So each
+// call sees everything published before it was made, and a burst of calls (a
+// watcher and the screen's reads) costs one or two reloads.
+function reload(ctx) {
+    if (!ctx.nextReload) {
+        const running = ctx.reloading ?? Promise.resolve();
+        ctx.nextReload = running.catch(() => {}).then(() => {
+            ctx.nextReload = null;
+            ctx.reloading = openCommunity(ctx.s, ctx.ref, { relays: ctx.relays, known: ctx })
+                .then((fresh) => { Object.assign(ctx, fresh); });
+            return ctx.reloading;
+        });
     }
+    return ctx.nextReload;
 }
 
 // Picks up other people's changes.
@@ -365,7 +383,7 @@ async function rawMessages(ctx, channel) {
     const events = ctx.state.encrypted(scope)
         ? await openEnvelopes(ctx.s, ctx.relays, keysOf(ctx, scope), KIND.COMMUNITY_MESSAGE)
         // plaintext: only from people who were ever members, so strangers' spam is not even fetched
-        : await query(ctx.s.pool, ctx.relays, { kinds: [KIND.COMMUNITY_MESSAGE], '#h': [ctx.ref], authors: [...ctx.state.ever], limit: 5000 });
+        : await synced(ctx.s, ctx.relays, { kinds: [KIND.COMMUNITY_MESSAGE], '#h': [ctx.ref] }, 'authors', [...ctx.state.ever]);
     return events
         .filter((e) => tag(e, 'community') === ctx.ref && tag(e, 'channel') === channel)
         .map((e) => ({

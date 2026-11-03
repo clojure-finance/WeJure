@@ -5,6 +5,7 @@ import { KIND, after, deletedIds, latest, publish, query, sign } from './core.js
 import { getEventHash } from 'nostr-tools/pure';
 import { subscribe } from './live.js';
 import { decryptAll } from './cache.js';
+import { synced } from './sync.js';
 
 // A signed post, not yet sent, optionally with a picture already on Blossom ({sha256, type}).
 export function newPost(s, text, media, { created_at } = {}) {
@@ -106,9 +107,10 @@ const wellFormed = (r) => !!r && typeof r.content === 'string' && Number.isInteg
     && r.tags.every((t) => Array.isArray(t) && t.every((v) => typeof v === 'string'))
     && (() => { try { return getEventHash(r) === r.id; } catch { return false; } })();
 
-// Every gift-wrapped message addressed to s that decrypts, as rumors.
+// Every gift-wrapped message addressed to s that decrypts, as rumors. All of
+// them, however many there are; after the first call, only new ones are fetched.
 export async function unwrapAll(s) {
-    const wraps = await query(s.pool, s.relays, { kinds: [KIND.GIFT_WRAP], '#p': [s.pk], limit: 5000 });
+    const wraps = await synced(s, s.relays, { kinds: [KIND.GIFT_WRAP] }, '#p', [s.pk]);
     // each gift wrap is opened (and its seal's signature checked) once (cache.js);
     // null for wraps that are not for us, forged or malformed
     return (await decryptAll(s, wraps, (w) => {

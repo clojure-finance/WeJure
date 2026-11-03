@@ -178,10 +178,11 @@ is computed from its messages.
   channel keys the member is entitled to. A new device rebuilds everything from
   those bundles.
 - **Open:** anyone with the id and relays reads the op log and can `join`
-  (if `join` is `open`). Clients ask for the founder's ops separately and fetch
-  missing parents by id, so a flood of ops from strangers cannot push the
-  genesis out of a relay's result limit. Messages are only asked for from
-  people who were ever members. When an admin adds someone, a key bundle
+  (if `join` is `open`). Clients page through all of a community's ops, ask
+  for the founder's ops separately on the first open, and fetch missing
+  parents by id, so a flood of ops from strangers cannot hide the genesis
+  (not even one dated in a single second, which paging cannot split). Messages
+  are only asked for from people who were ever members. When an admin adds someone, a key bundle
   without keys tells them about the community.
 - Each user keeps their community list in an app-data event encrypted to
   themselves, so open communities come back on a new device too. Invitations
@@ -196,8 +197,9 @@ is computed from its messages.
   could read. Rekeying protects the future.
 - **Rekey cost** is one gift wrap per member of the scope. That's fine for
   hundreds of members; thousands would need sender keys or MLS-style trees.
-- **Memory:** every client replays the whole op log. Large communities will
-  need signed checkpoints.
+- **Whole log:** every client fetches and replays the whole op log once per
+  page session, and replays it again whenever new ops arrive (about 30 ms for
+  5000 ops). Much larger communities will need signed checkpoints.
 - **Races:** a departed member's messages that the remover had not seen when
   sealing drop out of view, and messages sent with a key that turns out to
   need a rekey are readable by whoever got that key.

@@ -28,7 +28,10 @@ const { values: opts } = parseArgs({
 
 fs.mkdirSync(opts.data, { recursive: true });
 const store = new SqliteEventStore(path.join(opts.data, 'events.db'));
-const relay = new NostrRelay(store);
+// A client's mirrors keep a live subscription each, beside its short requests;
+// past the limit the relay closes the oldest, so it is set well above the
+// default of 20.
+const relay = new NostrRelay(store, { maxSubscriptionsPerClient: 100 });
 const validator = new Validator();
 const blossom = createBlossom(path.join(opts.data, 'blobs'));
 
