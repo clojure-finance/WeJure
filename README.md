@@ -75,6 +75,13 @@ together with the server, also at http://localhost:8020.
   the topics. Members can read exactly the periods they belonged to. Removed
   members cannot slip in backdated messages or actions. One lost or rogue
   owner cannot wreck or freeze a community.
+- **The device cache**: each gift wrap and envelope is decrypted and checked
+  once. The results are kept in IndexedDB, one database per account,
+  encrypted (AES-GCM) with a key derived from the account key. That key is
+  only in the logged-in tab, so the cache is unreadable without the
+  password. Logging out deletes the database. Every event is checked against
+  its id (the hash of its content), so a relay cannot slip other content in
+  under an id the cache already knows.
 - **Public data**: profiles, posts, follows, relay lists, and everything in
   open communities.
 - **Limits**: a stolen account key reveals what that account could read (no
@@ -100,7 +107,8 @@ Everything is a Nostr event (NIP-01). The kinds WeJure uses:
 | 1460–1463 | communities | operations, messages, encrypted envelopes, key bundles (see docs/COMMUNITIES.md; the numbers are WeJure's own for now) |
 
 The browser keeps the login in `sessionStorage` (`wejure-session`), so a reload
-stays logged in and closing the tab logs out.
+stays logged in and closing the tab logs out. Decrypted events are cached in
+IndexedDB (`wejure-<public key>`, encrypted; see Security).
 
 ## Code layout
 - `src/wejure/core.cljs`: routes, and redirects between logged-in and logged-out pages
@@ -110,6 +118,7 @@ stays logged in and closing the tab logs out.
   - `app.js`: what the screens call; it returns plain objects;
   - `core.js`: publishing to several relays, merged reads, repair;
   - `account.js`, `social.js`, `media.js`, `session.js`, `live.js`;
+  - `cache.js`: decrypted events, in memory and in IndexedDB;
   - `community-state.js`: the community rules, pure;
   - `communities.js`: the community input and output.
 - `server/`: `index.js` (app, relay and media server on one port), `store.js` (the relay's event store on `node:sqlite`), `blossom.js` (the media server)
@@ -118,7 +127,7 @@ stays logged in and closing the tab logs out.
 - `test/e2e/`: browser tests of the release build
 
 ## Testing
-- `npm test`: the Node tests (about 45 s). They cover accounts, the feed,
+- `npm test`: the Node tests (about 25 s). They cover accounts, the feed,
   messages, media, redundancy across crashing relays, live updates, and the
   community rules and attacks on them.
 - `npm run test:e2e`: builds the release version and runs Playwright through
@@ -126,15 +135,19 @@ stays logged in and closing the tab logs out.
   fails on any console error. Install its browser once with
   `npx playwright install chromium`. It starts its own server with empty
   data on port 8020, so stop any WeJure server there first.
+- `npm run bench`: times loading, reading and sending in a community of 30
+  members and 300 messages (arguments: messages, members).
 
 ## Deleting all data
 Stop the server and delete its `data/` directory. Logins live only in the
-browser tab's session.
+browser tab's session. Each browser's cache goes on logout, or with the
+site's stored data.
 
 ## Status
 The project is under development. Not built yet:
 - unblocking;
-- a local cache (every view asks the relays again);
+- fetching only what is new: every view still downloads all of its events
+  from the relays (decrypting is cached, transfer is not);
 - relays syncing with each other (NIP-77); clients repair relays that fall
   behind instead;
 - deleting media;

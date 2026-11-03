@@ -6,6 +6,7 @@ import * as C from './communities.js';
 import { KIND, createPool, query } from './core.js';
 import { fetchBlob, mediaServersOf, upload } from './media.js';
 import { clear, restore, save, siteConfig } from './session.js';
+import { forgetCache } from './cache.js';
 import * as social from './social.js';
 
 let current;
@@ -65,6 +66,8 @@ export async function login(username, password) {
 }
 
 export function logout() {
+    const s = session();
+    if (s) forgetCache(s.pk);   // the decrypted cache of this account on this device
     clear();
     current = undefined;
 }

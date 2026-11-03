@@ -2,7 +2,7 @@
 // asks all of them and merges, and repair() copies events to relays that miss them.
 // Nothing here trusts a relay: events are signed, and invalid ones are dropped.
 import { SimplePool } from 'nostr-tools/pool';
-import { finalizeEvent, verifyEvent } from 'nostr-tools/pure';
+import { finalizeEvent, getEventHash, verifyEvent } from 'nostr-tools/pure';
 import { bytesToHex, hexToBytes } from 'nostr-tools/utils';
 
 
@@ -16,7 +16,23 @@ export const KIND = {
     KEY_BUNDLE: 1463,           // community keys, only ever inside a gift wrap
 };
 
-export const createPool = () => new SimplePool({ enablePing: false, enableReconnect: false });
+// Whether an event is intact: its id must be the hash of its content (so a
+// relay cannot pass off other content under a known id, which the cache keys
+// on) and its signature valid. Gift wraps and envelopes are signed by one-time
+// keys, so their outer signature proves nothing and is skipped; what they carry
+// is checked after decryption. Valid signatures are remembered, so an event
+// seen again (from another relay, or in the next query) costs only the hash.
+const verified = new Set();
+export function checkEvent(e) {
+    try { if (getEventHash(e) !== e.id) return false; } catch { return false; }
+    if (e.kind === KIND.GIFT_WRAP || e.kind === KIND.ENVELOPE) return true;
+    if (verified.has(e.id + e.sig)) return true;
+    const ok = verifyEvent(e);
+    if (ok) verified.add(e.id + e.sig);
+    return ok;
+}
+
+export const createPool = () => new SimplePool({ enablePing: false, enableReconnect: false, verifyEvent: checkEvent });
 
 export const randomHex = (n) => bytesToHex(crypto.getRandomValues(new Uint8Array(n)));
 
@@ -55,7 +71,7 @@ export async function publish(pool, relays, event, { minAcks = 1, maxWait = 3000
 export async function query(pool, relays, filter, { maxWait = 3000 } = {}) {
     const events = await pool.querySync(relays, filter, { maxWait });
     const byId = new Map();
-    for (const e of events) if (verifyEvent(e)) byId.set(e.id, e);
+    for (const e of events) if (checkEvent(e)) byId.set(e.id, e);
     return [...byId.values()].sort((a, b) => b.created_at - a.created_at);
 }
 
@@ -75,7 +91,7 @@ async function relayUp(pool, url) {
 export async function repair(pool, relays, filter) {
     const per = await Promise.all(relays.map(async (url) => {
         if (!(await relayUp(pool, url))) return { url, up: false, events: [] };
-        const events = (await pool.querySync([url], { limit: 5000, ...filter }, { maxWait: 3000 })).filter(verifyEvent);
+        const events = (await pool.querySync([url], { limit: 5000, ...filter }, { maxWait: 3000 })).filter(checkEvent);
         return { url, up: true, events };
     }));
     const all = new Map();

@@ -3,6 +3,7 @@ import { getConversationKey, v2 as nip44 } from 'nostr-tools/nip44';
 import { unwrapEvent, wrapEvent } from 'nostr-tools/nip59';
 import { KIND, after, deletedIds, latest, publish, query, sign } from './core.js';
 import { subscribe } from './live.js';
+import { decryptAll } from './cache.js';
 
 // A signed post, not yet sent, optionally with a picture already on Blossom ({sha256, type}).
 export function newPost(s, text, media, { created_at } = {}) {
@@ -87,11 +88,9 @@ export async function sendDM(s, toPk, text) {
 // Every gift-wrapped message addressed to s that decrypts, as rumors.
 export async function unwrapAll(s) {
     const wraps = await query(s.pool, s.relays, { kinds: [KIND.GIFT_WRAP], '#p': [s.pk], limit: 5000 });
-    const rumors = [];
-    for (const w of wraps) {
-        try { rumors.push(unwrapEvent(w, s.sk)); } catch { /* not for us or forged */ }
-    }
-    return rumors;
+    // each gift wrap is opened (and its seal's signature checked) once (cache.js);
+    // null for wraps that are not for us or forged
+    return (await decryptAll(s, wraps, (w) => unwrapEvent(w, s.sk))).filter(Boolean);
 }
 
 // The conversation between s and peerPk, oldest first.

@@ -141,5 +141,37 @@ test('communities end to end', async ({ browser }) => {
         await expect(alice.getByText('hi, I am dana')).toBeVisible();
     });
 
+    await test.step("alice's device keeps an encrypted cache, which survives a reload and goes with logout", async () => {
+        const cached = () => alice.evaluate(async () => {
+            const name = (await indexedDB.databases()).map((d) => d.name).find((n) => n.startsWith('wejure-'));
+            if (!name) return null;
+            const db = await new Promise((resolve, reject) => {
+                const req = indexedDB.open(name);
+                req.onsuccess = () => resolve(req.result);
+                req.onerror = () => reject(req.error);
+            });
+            const rows = await new Promise((resolve) => {
+                const req = db.transaction('decrypted').objectStore('decrypted').getAll();
+                req.onsuccess = () => resolve(req.result);
+            });
+            db.close();
+            const bytes = rows.map((r) => new TextDecoder().decode(r.data)).join('');
+            return { rows: rows.length, plaintext: bytes.includes('who is in?') || bytes.includes('Hiking') };
+        });
+        const before = await cached();
+        expect(before.rows).toBeGreaterThan(5);
+        expect(before.plaintext).toBe(false);
+
+        await alice.goto('/communities');
+        await alice.getByRole('link', { name: 'Hiking Club' }).click();
+        await alice.reload();
+        await alice.getByRole('button', { name: /saturday hike/ }).click();
+        await expect(alice.getByText('me!')).toBeVisible();
+
+        await alice.getByRole('button', { name: 'Logout' }).click();
+        await expect(alice).toHaveURL(BASE + '/');
+        await expect.poll(cached).toBe(null);
+    });
+
     expect(problems).toEqual([]);
 });

@@ -4,11 +4,12 @@
 //
 // Most functions take a context from openCommunity(): {s, ref, relays, state, keys}.
 // Every change reloads it, so ctx.state is always the state after the change.
-import { finalizeEvent, generateSecretKey, verifyEvent } from 'nostr-tools/pure';
+import { finalizeEvent, generateSecretKey } from 'nostr-tools/pure';
 import { getConversationKey, v2 as nip44 } from 'nostr-tools/nip44';
 import { wrapEvent } from 'nostr-tools/nip59';
 import { hexToBytes } from 'nostr-tools/utils';
-import { KIND, after, latest, publish, query, randomHex, sha256Hex, sign } from './core.js';
+import { KIND, after, checkEvent, latest, publish, query, randomHex, sha256Hex, sign } from './core.js';
+import { decryptAll } from './cache.js';
 import { relaysOf } from './account.js';
 import { unwrapAll } from './social.js';
 import { resolve } from './community-state.js';
@@ -35,15 +36,13 @@ async function openEnvelopes(s, relays, keys, kind) {
     if (!keys.length) return [];
     const byTag = new Map(await Promise.all(keys.map(async (k) => [await tagOf(k.key), k.key])));
     const envs = await query(s.pool, relays, { kinds: [KIND.ENVELOPE], '#h': [...byTag.keys()], limit: 5000 });
-    const out = [];
-    for (const env of envs) {
+    // each envelope is decrypted and its content's signature checked once (cache.js)
+    const inners = await decryptAll(s, envs, (env) => {
         const key = byTag.get(env.tags.find((t) => t[0] === 'h')?.[1]);
-        try {
-            const inner = JSON.parse(nip44.decrypt(env.content, hexToBytes(key)));
-            if (inner.kind === kind && verifyEvent(inner)) out.push(inner);
-        } catch { /* not decryptable or not an event */ }
-    }
-    return out;
+        const inner = JSON.parse(nip44.decrypt(env.content, hexToBytes(key)));
+        return checkEvent(inner) ? inner : null;
+    });
+    return inners.filter((inner) => inner?.kind === kind);
 }
 
 // ---- the user's own list of communities (encrypted to themselves) ----
