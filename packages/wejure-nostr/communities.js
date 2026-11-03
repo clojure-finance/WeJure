@@ -10,7 +10,7 @@ import { wrapEvent } from 'nostr-tools/nip59';
 import { hexToBytes } from 'nostr-tools/utils';
 import { KIND, after, checkEvent, latest, publish, query, randomHex, relayUrls, sha256Hex, sign } from './core.js';
 import { decryptAll } from './cache.js';
-import { synced, watched } from './sync.js';
+import { hasOlder as olderExists, older, synced, watched } from './sync.js';
 import { relaysOf } from './account.js';
 import { unwrapAll } from './social.js';
 import { resolve } from './community-state.js';
@@ -29,22 +29,30 @@ const remembered = (fn) => {
 // different hashes, so knowing an id does not reveal where the messages are.
 const keyIdOf = remembered((key) => sha256Hex(utf8(`wejure-key-id:${key}`)));
 const tagOf = remembered((key) => sha256Hex(utf8(`wejure-envelope:${key}`)));
+// A channel message's sender, as a tag only holders of the key can compute:
+// it finds a member's latest messages (chainHeads) without loading the
+// channel's history. Relays can group a key's envelopes by sender with it,
+// but not name the sender.
+const senderTagOf = remembered((keyAndPk) => sha256Hex(utf8(`wejure-sender:${keyAndPk}`)));
+const senderTag = (key, pk) => senderTagOf(`${key}:${pk}`);
 const union = (...lists) => relayUrls(lists.flat());   // relay lists, cleaned (they come from other people)
+const ENVELOPES = { kinds: [KIND.ENVELOPE] };
+const plainMessages = (ref) => ({ kinds: [KIND.COMMUNITY_MESSAGE], '#h': [ref] });
+const PAGE = 100;   // messages fetched at a time when looking for someone's latest ones
 
-async function envelope(key, inner) {
+// sender: the inner event's author, for channel messages (see senderTag).
+async function envelope(key, inner, sender) {
     return finalizeEvent({
         kind: KIND.ENVELOPE,
         created_at: Math.floor(Date.now() / 1000),
-        tags: [['h', await tagOf(key)]],
+        tags: [['h', await tagOf(key)], ...(sender ? [['s', await senderTag(key, sender)]] : [])],
         content: nip44.encrypt(JSON.stringify(inner), hexToBytes(key)),
     }, generateSecretKey());
 }
 
-// The signed events inside the envelopes encrypted with any of `keys` ([{key}]).
-async function openEnvelopes(s, relays, keys, kind) {
-    if (!keys.length) return [];
+// The signed events of `kind` inside envs, which are encrypted with keys ([{key}]).
+async function openAll(s, envs, keys, kind) {
     const byTag = new Map(await Promise.all(keys.map(async (k) => [await tagOf(k.key), k.key])));
-    const envs = await synced(s, relays, { kinds: [KIND.ENVELOPE] }, '#h', [...byTag.keys()]);
     // each envelope is decrypted and its content's signature checked once (cache.js)
     const inners = await decryptAll(s, envs, (env) => {
         const key = byTag.get(env.tags.find((t) => t[0] === 'h')?.[1]);
@@ -52,6 +60,13 @@ async function openEnvelopes(s, relays, keys, kind) {
         return checkEvent(inner) ? inner : null;
     });
     return inners.filter((inner) => inner?.kind === kind);
+}
+
+// The signed events of `kind` inside the envelopes encrypted with any of keys ([{key}]).
+async function openEnvelopes(s, relays, keys, kind) {
+    if (!keys.length) return [];
+    const tags = await Promise.all(keys.map((k) => tagOf(k.key)));
+    return openAll(s, await synced(s, relays, ENVELOPES, '#h', tags), keys, kind);
 }
 
 // ---- the user's own list of communities (encrypted to themselves) ----
@@ -76,7 +91,8 @@ async function changeList(s, change) {
 const remember = (s, ref, relays) => changeList(s, (list) => [...list.filter((e) => e.ref !== ref), { ref, relays }]);
 const forget = (s, ref) => changeList(s, (list) => list.filter((e) => e.ref !== ref));
 
-// Key bundles addressed to s: ref -> {relays, keys: Map keyId -> {scope, key}}.
+// Key bundles addressed to s: ref -> {relays, keys: Map keyId -> key,
+// labels: Map keyId -> Set of the scopes bundles named for it, from, ...}.
 async function bundles(s) {
     const out = new Map();
     for (const r of await unwrapAll(s)) {
@@ -84,13 +100,20 @@ async function bundles(s) {
         let b;
         try { b = JSON.parse(r.content); } catch { continue; }
         if (!b || typeof b.ref !== 'string' || !Array.isArray(b.keys)) continue;
-        const entry = out.get(b.ref) ?? { relays: [], keys: new Map(), from: new Set() };
+        const entry = out.get(b.ref) ?? { relays: [], keys: new Map(), labels: new Map(), from: new Set() };
         entry.relays = union(entry.relays, b.relays);
         entry.from.add(r.pubkey);
         // a bundle's scope labels are not trusted: openCommunity takes each key's
-        // scope from the signed op log
+        // scope from the signed op log, and uses the labels only to decide what
+        // to fetch first
         for (const k of b.keys) {
-            if (typeof k?.key === 'string' && /^[0-9a-f]{64}$/.test(k.key)) entry.keys.set(await keyIdOf(k.key), k.key);
+            if (typeof k?.key !== 'string' || !/^[0-9a-f]{64}$/.test(k.key)) continue;
+            const id = await keyIdOf(k.key);
+            entry.keys.set(id, k.key);
+            if (typeof k.scope === 'string') {
+                if (!entry.labels.has(id)) entry.labels.set(id, new Set());
+                entry.labels.get(id).add(k.scope);
+            }
         }
         out.set(b.ref, entry);
     }
@@ -112,6 +135,19 @@ export async function accept(s, invitation) {
 
 // ---- loading ----
 
+// Fetches by id the plaintext parents of ops that are missing from ops.
+async function fetchParents(s, relays, ops) {
+    for (let round = 0; round < 5; round++) {
+        const missing = [...new Set([...ops.values()].flatMap((e) => e.tags.filter((t) => t[0] === 'parent').map((t) => t[1])))]
+            .filter((id) => !ops.has(id));
+        const more = missing.length ? await query(s.pool, relays, { kinds: [KIND.COMMUNITY_OP], ids: missing }) : [];
+        if (!more.length) return;
+        for (const e of more) ops.set(e.id, e);
+    }
+}
+
+const stateKeyIds = (state) => new Set((state?.keyOps.get('state') ?? []).map((k) => k.keyId));
+
 // `known`: an earlier context of the same community. Ops are never withdrawn,
 // so its ops carry over, and if none have arrived since, so does its state.
 export async function openCommunity(s, ref, { relays, known } = {}) {
@@ -124,22 +160,30 @@ export async function openCommunity(s, ref, { relays, known } = {}) {
     // On the first open the founder's ops are asked for separately too, so that
     // a flood of ops from others (anyone can tag an open community), all dated
     // the same second, cannot crowd the genesis op out of the pages (sync.js).
-    const [plain, founders, sealed] = await Promise.all([
+    const [plain, founders] = await Promise.all([
         synced(s, rels, { kinds: [KIND.COMMUNITY_OP] }, '#h', [ref]),
         known ? [] : query(s.pool, rels, { kinds: [KIND.COMMUNITY_OP], '#h': [ref], authors: [founder], limit: 5000 }),
-        openEnvelopes(s, rels, bundled.map(([, key]) => ({ key })), KIND.COMMUNITY_OP),
     ]);
     const ops = new Map(known?.ops);
-    for (const e of [...plain, ...founders, ...sealed]) ops.set(e.id, e);
-    // Plaintext parents that the limits left out are fetched by id.
-    for (let round = 0; round < 5; round++) {
-        const missing = [...new Set([...ops.values()].flatMap((e) => e.tags.filter((t) => t[0] === 'parent').map((t) => t[1])))]
-            .filter((id) => !ops.has(id));
-        const more = missing.length ? await query(s.pool, rels, { kinds: [KIND.COMMUNITY_OP], ids: missing }) : [];
-        if (!more.length) break;
-        for (const e of more) ops.set(e.id, e);
+    for (const e of [...plain, ...founders]) ops.set(e.id, e);
+    // Sealed ops are under the state keys, and only the log can say which keys
+    // those are (bundle labels are not trusted). So: first the keys the log
+    // named before or the bundles label 'state', then any other key the log
+    // names as one, and, if the genesis is still missing, every key. Channel
+    // keys stay untouched, so opening a community fetches no messages.
+    const named = stateKeyIds(known?.state);
+    const tried = new Set(bundled.map(([id]) => id).filter((id) => named.has(id) || b?.labels.get(id)?.has('state')));
+    let state = null;
+    for (let round = 0; ; round++) {
+        const keys = bundled.filter(([id]) => tried.has(id)).map(([, key]) => ({ key }));
+        for (const e of await openEnvelopes(s, rels, keys, KIND.COMMUNITY_OP)) ops.set(e.id, e);
+        await fetchParents(s, rels, ops);
+        state = known && known.ops.size === ops.size ? known.state : resolve(ref, [...ops.values()]);
+        const untried = bundled.map(([id]) => id).filter((id) => !tried.has(id));
+        const next = state ? untried.filter((id) => stateKeyIds(state).has(id)) : untried;
+        if (!next.length || round >= 3) break;
+        next.forEach((id) => tried.add(id));
     }
-    const state = known && known.ops.size === ops.size ? known.state : resolve(ref, [...ops.values()]);
     if (!state) throw new Error('community not found, or no access');
     // Keys count only if a valid key op names them, and their scope is the one
     // that op gives: keys authenticate themselves through the log.
@@ -186,7 +230,7 @@ export function watch(ctx, onChange) {
         watched(s, ctx.relays, { kinds: [KIND.COMMUNITY_OP] }, '#h', [ctx.ref], changed),   // plaintext ops (open communities)
         watched(s, s.relays, { kinds: [KIND.GIFT_WRAP] }, '#p', [s.pk], changed),           // new keys
     ];
-    const following = { envelopes: [null, () => {}], messages: [null, () => {}] };
+    const following = { ops: [null, () => {}], channels: [null, () => {}], messages: [null, () => {}] };
     // Listens for values under name, unless it already does.
     const listen = (name, values, start) => {
         const key = [...values].sort().join();
@@ -194,11 +238,15 @@ export function watch(ctx, onChange) {
         following[name][1]();
         following[name] = [key, values.length ? start(values) : () => {}];
     };
+    const tagsOf = (keys) => Promise.all(keys.map((k) => tagOf(k.key)));
     const follow = async () => {
-        const tags = await Promise.all([...ctx.keys.values()].map((k) => tagOf(k.key)));
-        listen('envelopes', tags, (vs) => watched(s, ctx.relays, { kinds: [KIND.ENVELOPE] }, '#h', vs, changed));
+        const keys = [...ctx.keys.values()];
+        // sealed ops under state keys; channel messages, read a page at a time, under the others
+        listen('ops', await tagsOf(keys.filter((k) => k.scope === 'state')), (vs) => watched(s, ctx.relays, ENVELOPES, '#h', vs, changed));
+        listen('channels', await tagsOf(keys.filter((k) => k.scope !== 'state')), (vs) =>
+            watched(s, ctx.relays, ENVELOPES, '#h', vs, changed, { paged: true }));
         listen('messages', ctx.state.mode === 'open' ? [...ctx.state.ever] : [], (vs) =>
-            watched(s, ctx.relays, { kinds: [KIND.COMMUNITY_MESSAGE], '#h': [ctx.ref] }, 'authors', vs, changed));
+            watched(s, ctx.relays, plainMessages(ctx.ref), 'authors', vs, changed, { paged: true }));
     };
     follow();
     return () => {
@@ -389,28 +437,81 @@ export async function leaveChannel(ctx, channel) {
 const readable = (ctx, channel) => !ctx.state.encrypted(`ch:${channel}`) || keysOf(ctx, `ch:${channel}`).length > 0;
 const tag = (e, name) => e.tags.find((t) => t[0] === name)?.[1];
 
-// Every signed message in a channel that ctx can decrypt, before validity checks.
-async function rawMessages(ctx, channel) {
+const toMessage = (e) => ({
+    id: e.id, from: e.pubkey, at: e.created_at, ms: Number(tag(e, 'ms')) || e.created_at * 1000,
+    topic: tag(e, 'topic') ?? '', text: e.content,
+    prev: e.tags.filter((t) => t[0] === 'prev').map((t) => t[1]),
+    seen: e.tags.filter((t) => t[0] === 'state').map((t) => t[1]),
+});
+const inChannel = (ctx, channel) => (e) => tag(e, 'community') === ctx.ref && tag(e, 'channel') === channel;
+
+// Where a channel's messages are: in envelopes under its keys, or, in plaintext
+// channels, signed by people who were ever members (so strangers' spam is not
+// even fetched). A mirror (sync.js) split on `field` into `values`.
+async function sourceOf(ctx, channel) {
     const scope = `ch:${channel}`;
-    const events = ctx.state.encrypted(scope)
-        ? await openEnvelopes(ctx.s, ctx.relays, keysOf(ctx, scope), KIND.COMMUNITY_MESSAGE)
-        // plaintext: only from people who were ever members, so strangers' spam is not even fetched
-        : await synced(ctx.s, ctx.relays, { kinds: [KIND.COMMUNITY_MESSAGE], '#h': [ctx.ref] }, 'authors', [...ctx.state.ever]);
-    return events
-        .filter((e) => tag(e, 'community') === ctx.ref && tag(e, 'channel') === channel)
-        .map((e) => ({
-            id: e.id, from: e.pubkey, at: e.created_at, ms: Number(tag(e, 'ms')) || e.created_at * 1000,
-            topic: tag(e, 'topic') ?? '', text: e.content,
-            prev: e.tags.filter((t) => t[0] === 'prev').map((t) => t[1]),
-            seen: e.tags.filter((t) => t[0] === 'state').map((t) => t[1]),
-        }));
+    if (ctx.state.encrypted(scope)) {
+        const keys = keysOf(ctx, scope);
+        return { keys, base: ENVELOPES, field: '#h', values: await Promise.all(keys.map((k) => tagOf(k.key))) };
+    }
+    return { keys: null, base: plainMessages(ctx.ref), field: 'authors', values: [...ctx.state.ever] };
 }
 
-// The latest messages of pk's chain in a channel (usually one).
-async function chainHeads(ctx, channel, pk, raw) {
-    const mine = (raw ?? await rawMessages(ctx, channel)).filter((m) => m.from === pk);
-    const referenced = new Set(mine.flatMap((m) => m.prev));
-    return mine.filter((m) => !referenced.has(m.id)).map((m) => m.id);
+// The signed messages of a channel that ctx has fetched and can decrypt,
+// before validity checks: its recent history at first, more after loadOlder.
+async function rawMessages(ctx, channel) {
+    const src = await sourceOf(ctx, channel);
+    const events = await synced(ctx.s, ctx.relays, src.base, src.field, src.values, { paged: true });
+    const signed = src.keys ? await openAll(ctx.s, events, src.keys, KIND.COMMUNITY_MESSAGE) : events;
+    return signed.filter(inChannel(ctx, channel)).map(toMessage);
+}
+
+// Fetches a channel's next page of older messages; resolves with whether
+// there are older ones still. In plaintext channels the page is the whole
+// community's, so it may hold few of this channel's messages.
+export async function loadOlder(ctx, channel) {
+    const src = await sourceOf(ctx, channel);
+    return older(ctx.s, ctx.relays, src.base, src.field, src.values);
+}
+
+// Whether a channel has older messages than those fetched.
+export async function hasOlder(ctx, channel) {
+    const src = await sourceOf(ctx, channel);
+    return olderExists(ctx.s, ctx.relays, src.base, src.field, src.values);
+}
+
+// pk's newest messages in a channel, asked for directly: by sender tag in
+// encrypted channels, by author in plaintext ones.
+async function newestBy(ctx, channel, pk) {
+    const src = await sourceOf(ctx, channel);
+    const theirs = (e) => e.pubkey === pk && inChannel(ctx, channel)(e);
+    if (src.keys) {
+        if (!src.keys.length) return [];
+        const tags = await Promise.all(src.keys.map((k) => senderTag(k.key, pk)));
+        const envs = await query(ctx.s.pool, ctx.relays, { ...ENVELOPES, '#s': tags, limit: PAGE });
+        return (await openAll(ctx.s, envs, src.keys, KIND.COMMUNITY_MESSAGE)).filter(theirs).map(toMessage);
+    }
+    // plaintext: their newest messages in the whole community, page by page
+    // until some are in this channel
+    let until;
+    for (let i = 0; i < 20; i++) {
+        const page = await query(ctx.s.pool, ctx.relays, { ...plainMessages(ctx.ref), authors: [pk], until, limit: PAGE });
+        const found = page.filter(theirs);
+        if (found.length || page.length < PAGE) return found.map(toMessage);
+        until = page.at(-1).created_at;   // newest first, so the last is the oldest
+    }
+    return [];
+}
+
+// The latest messages of pk's chain in a channel (usually one). They can be
+// older than the history fetched so far, so pk's newest are asked for too.
+async function chainHeads(ctx, channel, pk) {
+    const mine = new Map();
+    for (const m of [...await rawMessages(ctx, channel), ...await newestBy(ctx, channel, pk)]) {
+        if (m.from === pk) mine.set(m.id, m);
+    }
+    const referenced = new Set([...mine.values()].flatMap((m) => m.prev));
+    return [...mine.values()].filter((m) => !referenced.has(m.id)).map((m) => m.id);
 }
 
 export async function sendMessage(ctx, channel, topic, text) {
@@ -426,7 +527,7 @@ export async function sendMessage(ctx, channel, topic, text) {
         tags: [['h', ctx.ref], ['community', ctx.ref], ['channel', channel], ['topic', topic], ['ms', String(Date.now())],
             ...prev.map((p) => ['prev', p]), ...ctx.state.heads.map((h) => ['state', h])],
     });
-    const event = ctx.state.encrypted(scope) ? await envelope(currentKey(ctx, scope), inner) : inner;
+    const event = ctx.state.encrypted(scope) ? await envelope(currentKey(ctx, scope), inner, ctx.s.pk) : inner;
     await publish(ctx.s.pool, ctx.relays, event);
     return inner.id;
 }
@@ -492,10 +593,8 @@ async function sealDeparted(ctx) {
         // everyone who was ever in the channel, posted or not: an empty chain is a seal too
         const departed = [...(ch.visibility === 'community' ? state.ever : ch.ever)]
             .filter((pk) => !state.inChannel(ch.id, pk) && !state.departed.has(`${pk}|${ch.id}`));
-        if (!departed.length) continue;
-        const raw = await rawMessages(ctx, ch.id);
         for (const pk of departed) {
-            await publishOp(ctx, { type: 'seal', member: pk, channel: ch.id, heads: await chainHeads(ctx, ch.id, pk, raw) });
+            await publishOp(ctx, { type: 'seal', member: pk, channel: ch.id, heads: await chainHeads(ctx, ch.id, pk) });
         }
     }
 }

@@ -391,7 +391,8 @@ export async function topics(ref, channel) {
         .sort((a, b) => b.last - a.last);
 }
 
-// The messages of a channel's topic (all topics if topic is null), oldest first.
+// The fetched messages of a channel's topic (all topics if topic is null),
+// oldest first: its recent history, and older pages fetched by olderMessages.
 export async function messages(ref, channel, topic) {
     const ctx = await contextOf(ref);
     const msgs = await C.readChannel(ctx, channel, topic == null ? {} : { topic });
@@ -403,6 +404,30 @@ export async function messages(ref, channel, topic) {
             topic: m.topic, text: m.text, time: m.ms, mine: m.from === ctx.s.pk, canHide: canHide && m.from !== ctx.s.pk,
         };
     }));
+}
+
+// Whether a channel has older messages than those fetched so far.
+export async function hasOlderMessages(ref, channel) {
+    try {
+        return await C.hasOlder(await contextOf(ref), channel);
+    } catch {
+        return false;
+    }
+}
+
+// Fetches older messages of a channel's topic (all topics if topic is null),
+// page by page until there are 20 more or none are left, at most 10 pages at
+// a time. Resolves with whether there are older ones still.
+export async function olderMessages(ref, channel, topic) {
+    const ctx = await contextOf(ref);
+    const count = async () => (await C.readChannel(ctx, channel, topic == null ? {} : { topic })).length;
+    const before = await count();
+    let more = await C.hasOlder(ctx, channel);
+    for (let page = 0; more && page < 10; page++) {
+        more = await C.loadOlder(ctx, channel);
+        if ((await count()) >= before + 20) break;
+    }
+    return more;
 }
 
 export const sendCommunityMessage = (ref, channel, topic, text) => change(ref, (ctx) => C.sendMessage(ctx, channel, topic, text));

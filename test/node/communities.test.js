@@ -45,6 +45,30 @@ function countOpRequests(s) {
     return count;
 }
 
+// Counts the envelopes relays send to s from now on (call before s asks anything).
+function countEnvelopes(s) {
+    const count = { envelopes: 0 };
+    const ensure = s.pool.ensureRelay.bind(s.pool);
+    s.pool.ensureRelay = async (url, opts) => {
+        const relay = await ensure(url, opts);
+        if (!relay.countingEnvelopes) {
+            const subscribe = relay.subscribe.bind(relay);
+            relay.subscribe = (filters, params) => subscribe(filters, { ...params, onevent: (e) => {
+                if (e.kind === KIND.ENVELOPE) count.envelopes++;
+                params.onevent(e);
+            } });
+            relay.countingEnvelopes = true;
+        }
+        return relay;
+    };
+    return count;
+}
+
+// Loads a channel's older messages until there are none.
+async function loadAll(ctx, channel) {
+    while (await C.loadOlder(ctx, channel)) { /* next page */ }
+}
+
 // Accepts the invitation to ref (if there is one) and opens the community as s.
 async function enter(s, ref) {
     const { invitations } = await C.myCommunities(s);
@@ -287,6 +311,60 @@ describe('communities', () => {
         assert.deepEqual(texts(reads[1]), ['monday at 7']);
         assert.deepEqual(texts(reads[3]), ['monday at 7']);
         assert.ok(count.requests <= 2 * relays.length, `${count.requests / relays.length} reloads for four reads`);
+    });
+
+    test('a long channel: a new device fetches its recent history, older on demand, and a departed member\'s old message stays', async () => {
+        const archive = await C.createCommunity(alice, { name: 'Archive' });
+        const general = C.channelByName(archive, 'general');
+        await C.addMember(archive, bob.pk);
+        await C.addMember(archive, carol.pk);
+        const b = await enter(bob, archive.ref);
+        await C.sendMessage(b, general, 'old', 'bob was here');
+        await new Promise((r) => setTimeout(r, 1100));   // pages end on whole seconds: keep it in an older one
+        for (let i = 0; i < 130; i++) await C.sendMessage(archive, general, 'busy', `m${i}`);
+
+        // removed from a device whose history holds none of bob's messages: his
+        // last message is found by its sender tag, so it still counts
+        const alicePhone = track(await login(relays, 'alice', 'alice-pw'));
+        const a = await C.openCommunity(alicePhone, archive.ref);
+        assert.ok(!texts(await C.readChannel(a, general)).includes('bob was here'));
+        await C.removeMember(a, bob.pk);
+
+        const carolPhone = track(await login(relays, 'carol', 'carol-pw'));
+        const count = countEnvelopes(carolPhone);
+        const c = await C.openCommunity(carolPhone, archive.ref);
+        assert.ok(count.envelopes < 30, `opening fetched ${count.envelopes} envelopes, so messages too`);
+        const recent = texts(await C.readChannel(c, general));
+        assert.ok(recent.length >= 100 && recent.length < 131, `${recent.length} messages at first`);
+        assert.equal(recent.at(-1), 'm129');
+        assert.ok(!recent.includes('bob was here'));
+        const n = recent.map((t) => Number(t.slice(1)));
+        assert.deepEqual(n, n.map((_, i) => n[0] + i), 'no holes in what was fetched');
+        assert.ok(await C.hasOlder(c, general));
+        await loadAll(c, general);
+        const all = texts(await C.readChannel(c, general));
+        assert.equal(all.length, 131);
+        assert.equal(all[0], 'bob was here');
+        assert.ok(!(await C.hasOlder(c, general)));
+    });
+
+    test('a long plaintext channel pages too, and someone who leaves keeps their old message', async () => {
+        const square = await C.createCommunity(alice, { name: 'Town Square', mode: 'open', join: 'open' });
+        const general = C.channelByName(square, 'general');
+        const b = await C.join(bob, square.ref, relays);
+        await C.sendMessage(b, general, 'hello', 'bob says hi');
+        await new Promise((r) => setTimeout(r, 1100));
+        for (let i = 0; i < 110; i++) await C.sendMessage(square, general, 'busy', `p${i}`);
+        const bobPhone = track(await login(relays, 'bob', 'bob-pw'));
+        await C.leave(await C.openCommunity(bobPhone, square.ref));   // finds his last message by author
+
+        const carolPhone = track(await login(relays, 'carol', 'carol-pw'));
+        const c = await C.openCommunity(carolPhone, square.ref, { relays });
+        assert.ok(!texts(await C.readChannel(c, general)).includes('bob says hi'));
+        await loadAll(c, general);
+        const all = texts(await C.readChannel(c, general));
+        assert.equal(all.length, 111);
+        assert.equal(all[0], 'bob says hi');
     });
 
     test('relays crash, and a new device finds its private and open communities on the rest', async () => {

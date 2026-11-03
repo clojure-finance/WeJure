@@ -67,8 +67,13 @@ encrypted with the scope's key (NIP-44), and published as kind 1462 from a
 throwaway key under the tag `h = sha256("wejure-envelope:" + key)`, a
 different hash than the key's id, so a removed member who still reads the old
 op log (and sees new key ids) cannot find the new envelopes. Relays see random
-keys and random tags. Open plaintext ops and messages are published as they
-are, tagged `h = <community id>`.
+keys and random tags. A channel message's envelope also carries
+`s = sha256("wejure-sender:" + key + ":" + sender's public key)`, so key holders
+can ask for one member's latest messages without loading the channel's history
+(see "Departed members"); relays can tell which envelopes under a key come
+from the same sender, though not who it is (they mostly see that anyway: which
+connection published each). Open plaintext ops and messages are published as
+they are, tagged `h = <community id>`.
 
 **Messages** (kind 1461): `{channel, topic, text}`, plus three kinds of tags.
 `prev` tags name the sender's own latest messages in that channel, so each
@@ -149,7 +154,10 @@ the departed member's message chain. Afterwards, only messages reachable from
 those heads through `prev` count. A forged "old" message is not in the chain.
 Members of channels the remover cannot read add the heads with `seal`, and
 heads from all ops are combined. Until a channel is sealed, the departed
-member's messages there still count.
+member's messages there still count. Clients load only a channel's recent
+history, so the heads are not looked up there: the departing member's newest
+messages are asked for directly, by their `s` tags (by author in plaintext
+channels).
 
 ## Messages: what counts
 

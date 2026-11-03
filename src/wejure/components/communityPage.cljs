@@ -34,7 +34,10 @@
        (when (= visibility "private")
          [:> LockIcon {:font-size "small" :color "action"}])])]])
 
-(defn- topic-list [topics selected on-select]
+(defn- topic-list
+  "Topics of the messages fetched so far; with older? the counts get a +,
+  since older messages are not fetched yet."
+  [topics selected on-select older?]
   [column {:width 240 :flex-shrink 0}
    [column-title "Topics"]
    [:> List {:dense true}
@@ -44,7 +47,7 @@
       ^{:key topic}
       [:> ListItemButton {:selected (= topic selected) :on-click #(on-select topic)}
        [:> ListItemText {:primary topic}]
-       [:> Typography {:variant "body2" :color "textSecondary"} count]])]])
+       [:> Typography {:variant "body2" :color "textSecondary"} (str count (when older? "+"))]])]])
 
 (defn- message-row [ref {:keys [id from username picture topic text time mine canHide]} show-topic? act!]
   [:> Box {:sx {:display "flex" :gap 1.5 :px 2 :py 1}}
@@ -84,39 +87,71 @@
                draft (r/atom "")
                error (r/atom nil)
                settings? (r/atom false)
-               load-channel! (fn []
+               older? (r/atom false)                                   ;; the channel has older messages to fetch
+               loading-older? (r/atom false)
+               list-el (atom nil)                                      ;; the scrolling message list
+               ;; scroll: :bottom shows the newest messages, :keep keeps the view
+               ;; where it was (older ones added above), :follow stays at the
+               ;; bottom if it was there
+               load-channel! (fn [scroll]
                                (when-let [c @channel]
                                  (.then (app/topics ref c)
                                         #(when (= c @channel) (reset! topics (js->clj % :keywordize-keys true))))
+                                 (.then (app/hasOlderMessages ref c)
+                                        #(when (= c @channel) (reset! older? %)))
                                  (let [t @topic]
                                    (.then (app/messages ref c t)
                                           #(when (and (= c @channel) (= t @topic))
-                                             (reset! messages (js->clj % :keywordize-keys true)))))))
+                                             (let [el @list-el
+                                                   from-bottom (when el (- (.-scrollHeight el) (.-scrollTop el)))
+                                                   at-bottom? (or (nil? el) (< (- from-bottom (.-clientHeight el)) 40))]
+                                               (reset! messages (js->clj % :keywordize-keys true))
+                                               (r/after-render
+                                                (fn []
+                                                  (when-let [el @list-el]
+                                                    (cond
+                                                      (and (= scroll :keep) from-bottom)
+                                                      (set! (.-scrollTop el) (- (.-scrollHeight el) from-bottom))
+                                                      (or (= scroll :bottom) at-bottom?)
+                                                      (set! (.-scrollTop el) (.-scrollHeight el))))))))))))
+               load-older! (fn []
+                             (let [c @channel
+                                   t @topic]
+                               (when (and c @older? (not @loading-older?))
+                                 (reset! loading-older? true)
+                                 (-> (app/olderMessages ref c t)
+                                     (.then (fn [more]
+                                              (when (and (= c @channel) (= t @topic))
+                                                (reset! older? more)
+                                                (load-channel! :keep))))
+                                     (.finally #(reset! loading-older? false))))))
                load! (fn []
                        (.then (app/community ref)
                               (fn [v]
                                 (let [v (js->clj v :keywordize-keys true)
-                                      readable (filter :readable (:channels v))]
+                                      readable (filter :readable (:channels v))
+                                      stays? (some #(= @channel (:id %)) readable)]
                                   (reset! view v)
-                                  (when-not (some #(= @channel (:id %)) readable)   ;; first load, or channel gone
+                                  (when-not stays?                     ;; first load, or channel gone
                                     (reset! channel (:id (first (sort-by :name readable))))
                                     (reset! topic nil))
-                                  (load-channel!)))))
+                                  (load-channel! (if stays? :follow :bottom))))))
                select-channel! (fn [id]
                                  (reset! channel id)
                                  (reset! topic nil)
                                  (reset! topics [])
                                  (reset! messages [])
-                                 (load-channel!))
+                                 (reset! older? false)
+                                 (load-channel! :bottom))
                select-topic! (fn [t]
                                (reset! topic t)
                                (reset! new-topic (or t ""))
-                               (load-channel!))
+                               (load-channel! :bottom))
                act! (fn [p]                                 ;; runs a change, then reloads
-                                 (reset! error nil)
-                                 (.then p (fn [err]
-                                            (when err (reset! error err))
-                                            (load!))))
+                      (reset! error nil)
+                      (.then p (fn [err]
+                                 (when err (reset! error err))
+                                 (load!))))
                send! (fn []
                        (let [text @draft
                              c @channel
@@ -126,7 +161,7 @@
                                 (fn [err]
                                   (cond
                                     err (do (reset! draft text) (reset! error err))
-                                    (= c @channel) (do (reset! topic t) (load-channel!)))))))
+                                    (= c @channel) (do (reset! topic t) (load-channel! :bottom)))))))
                _ (load!)
                stop (app/watchCommunity ref load!)]
     (let [v @view]
@@ -156,11 +191,21 @@
            [:> Typography {:color "error" :sx {:px 1}} @error])
          [:> Box {:sx {:display "flex" :gap 1 :flex-grow 1 :min-height 0}}
           [channel-list (:channels v) @channel select-channel!]
-          [topic-list @topics @topic select-topic!]
+          [topic-list @topics @topic select-topic! @older?]
           [column {:flex-grow 1 :display "flex" :flex-direction "column"}
-           [:> Box {:sx {:flex-grow 1 :overflow "auto"}}
+           ;; scrolling to the top fetches older messages; the button does too,
+           ;; for lists too short to scroll
+           [:> Box {:ref #(reset! list-el %)
+                    :class-name "message-list"
+                    :sx {:flex-grow 1 :overflow "auto"}
+                    :on-scroll #(when (< (.. % -target -scrollTop) 40) (load-older!))}
+            (when @older?
+              [:> Box {:sx {:display "flex" :justify-content "center" :p 1}}
+               [:> Button {:size "small" :disabled @loading-older? :on-click load-older!}
+                (if @loading-older? "Loading…" "Load older messages")]])
             (if (empty? @messages)
-              [:> Typography {:color "textSecondary" :sx {:p 2}} "No messages yet. Start a topic below."]
+              [:> Typography {:color "textSecondary" :sx {:p 2}}
+               (if @older? "No recent messages." "No messages yet. Start a topic below.")]
               (let [all-topics? (nil? @topic)]                           ;; deref outside the lazy seq
                 (for [m @messages]
                   ^{:key (:id m)} [message-row ref m all-topics? act!])))]

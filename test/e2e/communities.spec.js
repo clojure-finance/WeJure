@@ -1,6 +1,7 @@
 // Communities in the browser: a private community with a private channel,
 // invitations, topics, a removal, and an open community joined by link.
 const { test, expect } = require('@playwright/test');
+const { RELAY } = require('./relay');
 
 const BASE = 'http://localhost:8020';
 const N = String(Date.now() % 1000000);
@@ -175,3 +176,64 @@ test('communities end to end', async ({ browser }) => {
 
     expect(problems).toEqual([]);
 });
+
+test('a long channel shows its newest messages and fetches older ones when scrolled up', async ({ browser }) => {
+    const name = `cerin${N}`;
+    const page = await newUser(browser, 'erin');
+    await signUp(page, name);
+    await page.getByRole('link', { name: 'Communities' }).click();
+    await page.getByLabel('Name').fill('Long Club');
+    await page.getByRole('button', { name: 'Create' }).click();
+    await expect(page).toHaveURL(/\/c\//, { timeout: 30000 });
+    await expect(page.getByText('# general')).toBeVisible();
+
+    // 131 messages, sent from the test process as the same account (faster than typing)
+    const { login } = await import('wejure-nostr/account.js');
+    const C = await import('wejure-nostr/communities.js');
+    const s = await login([RELAY], name, PASSWORD);
+    try {
+        const [ref] = (await C.myCommunities(s)).joined.keys();
+        const club = await C.openCommunity(s, ref);
+        const general = C.channelByName(club, 'general');
+        await C.sendMessage(club, general, 'history', 'the very first message');
+        await new Promise((r) => setTimeout(r, 1100));   // pages end on whole seconds: keep it in an older one
+        for (let i = 0; i < 130; i++) await C.sendMessage(club, general, 'busy', `n${i}`);
+    } finally {
+        s.pool.destroy();
+    }
+
+    // The open page got them all live (and saved them); a new device has none
+    const device = await newUser(browser, 'erin on another device');
+    await device.goto('/login');
+    const fields = device.locator('input.MuiInputBase-input');
+    await fields.nth(0).fill(name);
+    await fields.nth(1).fill(PASSWORD);
+    await device.getByRole('button', { name: 'Submit' }).click();
+    await expect(device).toHaveURL(BASE + '/home', { timeout: 30000 });
+    await device.getByRole('link', { name: 'Communities' }).click();
+    await device.getByRole('link', { name: 'Long Club' }).click();
+    await page.context().close();
+    await check(device);
+    expect(problems).toEqual([]);
+});
+
+// The numbers of the "n<i>" messages shown, in order.
+const shown = async (page) => (await page.locator('.message-list p').allTextContents())
+    .filter((t) => /^n\d+$/.test(t)).map((t) => Number(t.slice(1)));
+
+async function check(page) {
+    await expect(page.getByText('n129', { exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Load older messages' })).toBeVisible();
+    await expect(page.getByRole('button', { name: /^busy/ })).toContainText('+');
+    const first = await shown(page);
+    expect(first.at(-1)).toBe(129);
+    expect(first).toEqual(first.map((_, i) => first[0] + i));   // the newest ones, no holes
+    await expect(page.getByText('the very first message')).toHaveCount(0);
+
+    await page.locator('.message-list').hover();
+    await page.mouse.wheel(0, -100000);   // to the top, which fetches older messages
+    await expect(page.getByText('the very first message')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Load older messages' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: /^busy/ })).toContainText('130');
+    expect(await shown(page)).toEqual([...Array(130).keys()]);
+}

@@ -76,7 +76,8 @@ together with the server, also at http://localhost:8020.
   see who blocks whom. It works on the blocker's side.
 - **Communities** are designed in [docs/COMMUNITIES.md](docs/COMMUNITIES.md).
   In private communities, relays see neither the community, the senders nor
-  the topics. Members can read exactly the periods they belonged to. Removed
+  the topics (they can tell which messages under one key share a sender, not
+  who that is). Members can read exactly the periods they belonged to. Removed
   members cannot slip in backdated messages or actions. Changing the owners
   needs a majority of them, so with three or more owners, one lost or rogue
   owner can neither take over nor freeze the community.
@@ -137,7 +138,10 @@ gift wraps, which are backdated on purpose). The copies are saved in the
 device cache, so after a page load the first read catches up the same way
 instead of fetching everything, and a community whose relays are all down
 still opens. While a page listens, a dropped subscription is restored after
-two seconds. A community's state is computed again only when new
+two seconds. Channels are paged mirrors: they fetch their newest 100
+messages, and older ones when the reader scrolls up (or presses "Load older
+messages"). Opening a community fetches its operations only, not the
+messages of its channels. A community's state is computed again only when new
 operations arrive. `npm run bench` shows the effect: with 600 messages and 200
 direct messages, a member's page update when a message arrives went from
 about 4500 events and 160 ms to 1 event and 10 ms.
