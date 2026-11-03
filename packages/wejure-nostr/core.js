@@ -64,9 +64,8 @@ export async function sha256Hex(bytes) {
 // session, so replaceable events (profile, follows, ...) written in the same
 // second still replace each other in order.
 export function sign(s, template) {
-    const t = Math.max(Math.floor(Date.now() / 1000), (s.lastAt || 0) + 1);
-    const created_at = template.created_at ?? t;
-    if (template.created_at === undefined) s.lastAt = t;
+    const created_at = template.created_at ?? Math.max(Math.floor(Date.now() / 1000), (s.lastAt || 0) + 1);
+    s.lastAt = Math.max(s.lastAt || 0, created_at);
     return finalizeEvent({ tags: [], content: '', ...template, created_at }, s.sk);
 }
 
