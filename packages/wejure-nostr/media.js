@@ -2,6 +2,26 @@
 // servers, and fetched from whichever answers first with bytes matching the name.
 import { KIND, latest, sha256Hex, sign } from './core.js';
 
+// fetch() with a time limit on the answer's headers (the server answering at
+// all) and a longer one, ms per kilobyte, for the body, so a large file on a
+// slow line still gets through. bodyMs: the time for the body (and, on
+// uploads, for sending it).
+async function fetchIn(url, options, { headersMs, bodyMs = 60000 }, read = (res) => res) {
+    const controller = new AbortController();
+    let timer = setTimeout(() => controller.abort(), headersMs + (options.body ? bodyMs : 0));
+    try {
+        const res = await fetch(url, { ...options, signal: controller.signal });
+        clearTimeout(timer);
+        timer = setTimeout(() => controller.abort(), bodyMs);
+        return await read(res);
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
+// Time to allow for moving n bytes: at least 30 s, more for big files (at 50 KB/s).
+const transferMs = (n) => Math.max(30000, n / 50);
+
 function auth(s, verb, hash) {
     const e = sign(s, {
         kind: KIND.BLOSSOM_AUTH,
@@ -17,11 +37,10 @@ function auth(s, verb, hash) {
 export async function upload(s, bytes, type, servers = s.mediaServers) {
     const sha256 = await sha256Hex(bytes);
     const results = await Promise.allSettled(servers.map(async (server) => {
-        const res = await fetch(`${server}/upload`, {
+        const res = await fetchIn(`${server}/upload`, {
             method: 'PUT', body: bytes,
             headers: { Authorization: auth(s, 'upload', sha256), 'Content-Type': type, 'X-SHA-256': sha256 },
-            signal: AbortSignal.timeout(5000),
-        });
+        }, { headersMs: 5000, bodyMs: transferMs(bytes.length) });
         if (!res.ok) throw new Error(`${server}: HTTP ${res.status} ${res.headers.get('x-reason') ?? ''}`);
         return server;
     }));
@@ -33,11 +52,10 @@ export async function upload(s, bytes, type, servers = s.mediaServers) {
 
 // Asks server to copy a blob from url itself (BUD-04), so the user uploads once.
 export async function mirror(s, server, url, sha256) {
-    const res = await fetch(`${server}/mirror`, {
+    const res = await fetchIn(`${server}/mirror`, {
         method: 'PUT', body: JSON.stringify({ url }),
         headers: { Authorization: auth(s, 'upload', sha256), 'Content-Type': 'application/json' },
-        signal: AbortSignal.timeout(5000),
-    });
+    }, { headersMs: 60000 });   // the server fetches the file before it answers
     if (!res.ok) throw new Error(`${server}: HTTP ${res.status} ${res.headers.get('x-reason') ?? ''}`);
 }
 
@@ -47,9 +65,10 @@ export async function fetchBlob(sha256, servers) {
     const skipped = [];
     for (const server of servers) {
         try {
-            const res = await fetch(`${server}/${sha256}`, { signal: AbortSignal.timeout(3000) });
-            if (!res.ok) { skipped.push(`${server}: HTTP ${res.status}`); continue; }
-            const bytes = new Uint8Array(await res.arrayBuffer());
+            const got = await fetchIn(`${server}/${sha256}`, {}, { headersMs: 3000 },
+                async (res) => (res.ok ? new Uint8Array(await res.arrayBuffer()) : res.status));
+            if (typeof got === 'number') { skipped.push(`${server}: HTTP ${got}`); continue; }
+            const bytes = got;
             if ((await sha256Hex(bytes)) !== sha256) { skipped.push(`${server}: wrong content`); continue; }
             return { bytes, server, skipped };
         } catch (e) {

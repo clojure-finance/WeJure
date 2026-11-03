@@ -44,7 +44,8 @@ history (see "Limits").
 **Operations.** Every change to a community is an *operation* (op): a Nostr
 event signed by the person making the change (kind 1460, JSON content
 `{type, ...}`), tagged with the community and with `parent` tags naming the
-latest ops its author had seen. The ops form a DAG (like git commits), and
+latest valid ops its author had seen (at most 20; invalid ops, which anyone
+can publish in an open community, are not built on). The ops form a DAG (like git commits), and
 everyone computes the community's state from it with the same deterministic
 rules. Nobody, not even a relay, has to put the ops in order.
 
@@ -78,7 +79,7 @@ they are, tagged `h = <community id>`.
 **Messages** (kind 1461): `{channel, topic, text}`, plus three kinds of tags.
 `prev` tags name the sender's own latest messages in that channel, so each
 person's messages per channel form a hash chain. `state` tags name the op
-log's heads the sender saw. `ms` gives milliseconds, so messages sent within
+log's valid heads the sender saw, and the latest checkpoint. `ms` gives milliseconds, so messages sent within
 the same second still sort correctly.
 
 ## Operations
@@ -101,10 +102,12 @@ the same second still sort correctly.
 | `seal {member, channel, heads}` | channel members, admin+ | records a departed member's last messages |
 | `hide {message}` | moderator+ | moderation |
 | `retract {message}` | the message's author | deletes one's own message |
+| `checkpoint {...}` / `approve-checkpoint {checkpoint}` | owners | see "Checkpoints"; no effect on the state |
 
 ## Computing the state
 
-1. Drop ops with bad signatures, a wrong community tag, or unknown parents.
+1. Drop ops with bad signatures or a wrong community tag. Ops whose parents
+   are not all known wait for them (after a checkpoint, see "Checkpoints").
 2. Order the DAG topologically. Among ops that are ready at the same time,
    take the smallest `(created_at, id)`. Every member gets the same order.
 3. Replay in that order, checking each op against the state so far.
@@ -138,8 +141,8 @@ the same second still sort correctly.
 - **Healing:** while a scope needs a rekey, nobody sends in it; the client
   first rekeys it (any member may). The person removing someone rekeys right
   away, so in practice this happens only after leaves and in races.
-- **New members:** they get every state key, so they can check the op log back
-  to the genesis. For `shared` channels they get all past keys whoever adds
+- **New members:** they get every state key, so they can read the op log and
+  the checkpoints back to the genesis. For `shared` channels they get all past keys whoever adds
   them holds; for `from-join` channels the addition forces a rekey, so they
   hold only keys from after they joined.
 - **Labels are not trusted:** a key bundle says which scope each key is for,
@@ -186,12 +189,13 @@ is computed from its messages.
   channel keys the member is entitled to. A new device rebuilds everything from
   those bundles.
 - **Open:** anyone with the id and relays reads the op log and can `join`
-  (if `join` is `open`). Clients page through all of a community's ops, ask
-  for the founder's ops separately on the first open, and fetch missing
-  parents by id, so a flood of ops from strangers cannot hide the genesis
-  (not even one dated in a single second, which paging cannot split). Messages
-  are only asked for from people who were ever members. When an admin adds someone, a key bundle
-  without keys tells them about the community.
+  (if `join` is `open`). Before the first checkpoint, clients page through
+  all of a community's ops, ask for the founder's ops separately, and fetch
+  missing parents by id, so a flood of ops from strangers cannot hide the
+  genesis (not even one dated in a single second, which paging cannot split).
+  Messages are only asked for from people who were ever members. When an
+  admin adds someone, a key bundle without keys tells them about the
+  community.
 - Each user keeps their community list in an app-data event encrypted to
   themselves, so open communities come back on a new device too. Invitations
   to private communities show up as bundles, and the client lists only the
@@ -205,13 +209,13 @@ The op log grows with every join, removal, key change and moderation, and a
 new device would have to fetch and replay all of it. A checkpoint lets it
 start from a snapshot instead.
 
-- **Proposing.** An owner's client proposes one every 500 ops, and whenever
-  the owners change, with a `checkpoint` op on its heads:
+- **Proposing.** An owner's client proposes one every 500 valid ops, and
+  whenever the owners change, with a `checkpoint` op on its valid heads:
   `{prev, hash, indexHash, state, index, owners, offset, count}`. `hash` is
   the SHA-256 of the snapshot of the state those heads give (roles, members,
-  channels, key ops, which scopes need a new key, departure seals, hidden and
-  retracted messages, open proposals, who was added by which op), as JSON in a
-  fixed order; `state` and `index` are the ids of the events (kind 1464, in
+  channels, key ops, which scopes need a new key after a removal or an
+  addition, departure seals, hidden and retracted messages, open proposals,
+  who was added by which op), as JSON in the order the replay created things; `state` and `index` are the ids of the events (kind 1464, in
   25 000-character parts, sealed under the state key in private communities)
   that hold the snapshot and the covered index (below); `owners` are the
   snapshot's owners; `prev` is the previous accepted checkpoint.
@@ -220,36 +224,46 @@ start from a snapshot instead.
   proposed or approved it (`approve-checkpoint {checkpoint}`). That is the
   majority that owner changes need, so faking one takes as many owners as a
   takeover does. Owners' clients approve on their own after recomputing the
-  snapshot and index from the log, fetching the parts, and checking that the
-  checkpoint leaves out no valid op they know; if it does, they wait for one
-  that covers it and, being owners, propose it. An owner backs one proposal
-  per checkpoint (switching only when its earlier choice would drop an op),
-  so among honest owners two cannot both win; if two did, the earliest
-  (`created_at`, id) would count.
+  snapshot and index from the log and fetching the parts. An owner backs one
+  proposal per checkpoint (switching only when its choice stops verifying),
+  so among honest owners two cannot both win. Before proposing or approving,
+  a client replaces a state key that a departed member holds.
+- **Forks.** Owners who once had a majority keep their keys, so they could
+  later sign a rival successor to a checkpoint, backdated (the founder alone,
+  before the first). Dates cannot settle that, so a device follows the
+  checkpoint it accepted before: its own, the one in the user's community
+  list (each device records the latest it accepted there), or the one in the
+  invitation (key bundles carry the sender's). From there, or without one, it
+  follows a checkpoint only while it has a single accepted successor; at a
+  fork it stops, replays the ops since the last checkpoint before it, and
+  neither proposes nor approves.
 - **The state** is then the latest accepted checkpoint's snapshot plus the
   ops that descend from it and are dated no earlier than it, ordered and
-  replayed as above (revocations from before it are in the snapshot already).
-  Ops that do not build on it are ignored by everyone. A client that writes
-  one on an older view is told ("not allowed") and can write it again; one
-  whose op reached the approvers only after they approved is redone by its
-  author's client on its own once the checkpoint is accepted.
+  replayed as above (revocations from before it are in the snapshot already);
+  their parents from before it count as known. Ops that do not build on it
+  are ignored by everyone. A client that writes one on an older view is told
+  ("not allowed") and can write it again; one whose op reached the approvers
+  too late does it again on its own once the checkpoint is accepted (not key
+  ops: a dropped rekey is healed with a new key, a dropped channel made anew).
 - **Fetching.** Checkpoint and approval ops carry a tag `c` (`checkpoint` in
   plaintext, `sha256("wejure-checkpoint:" + key)` on envelopes), so a new
   device fetches them, the snapshot, and only the ops dated from the
   checkpoint on. Nothing can hide from that: ops are dated no earlier than
-  their parents, an envelope no earlier than the op inside (an op in an older
-  envelope does not count), and an op dated before the checkpoint it builds on
-  is ignored.
+  the latest checkpoint they build on (one dated before it is ignored), and
+  an envelope no earlier than the op inside (an op in an older envelope does
+  not count). Snapshots are kept in the device cache.
 - **The covered index** answers what old messages ask: their `state` tags name
   ops from before the checkpoint, and "written after joining" asks whether the
   sender's add op is an ancestor of those. Per covered op, in order, it holds
   a 16-hex prefix of the id, and for ops that are not cuts (written
   concurrently) their latest cut and parents. Each checkpoint carries the
   index of the ops since the previous one; clients fetch them only when they
-  read messages from before the latest checkpoint.
-- **Missing parts.** If a checkpoint's parts are gone, a client computes its
-  snapshot from the previous checkpoint (or the genesis) and the ops since,
-  and uses it if it has the approved hash.
+  read messages from before the latest checkpoint (an epoch whose index
+  cannot be fetched is tried again a minute later; meanwhile its messages do
+  not count).
+- **Missing parts.** If a checkpoint's snapshot parts are gone, a client
+  computes its snapshot from the previous checkpoint (or the genesis) and the
+  ops since, and uses it if it has the approved hash.
 
 ## Limits (known, accepted for now)
 
@@ -257,11 +271,12 @@ start from a snapshot instead.
   could read. Rekeying protects the future.
 - **Rekey cost** is one gift wrap per member of the scope. That's fine for
   hundreds of members; thousands would need sender keys or MLS-style trees.
-- **Checkpoints need their owners:** if most owners of the latest checkpoint
-  stop using WeJure, no new checkpoint is accepted, and clients replay the
-  ops since the last one (slower, still correct). Between checkpoints, a
-  client replays the ops since the last one whenever new ops arrive (about
-  30 ms for 5000 ops).
+- **Checkpoints need their owners:** if a majority of the latest
+  checkpoint's owners (the founder, before the first) no longer uses WeJure,
+  no checkpoint is accepted any more, for good; clients then replay the ops
+  since the last one (slower, still correct). The same holds past a fork, for
+  devices that stop there. Between checkpoints, a client replays the ops
+  since the last one whenever new ops arrive (about 30 ms for 5000 ops).
 - **Races:** a departed member's messages that the remover had not seen when
   sealing drop out of view, and messages sent with a key that turns out to
   need a rekey are readable by whoever got that key.

@@ -1,6 +1,6 @@
 // A malicious relay for tests: it accepts writes (and acks them) but changes the
 // content of every event it serves, keeping the original id and signature.
-// Usage: node servers/evil-relay.js <port>
+// Usage: node test/node/evil-relay.js <port>
 import { WebSocketServer } from 'ws';
 
 const [port] = process.argv.slice(2);

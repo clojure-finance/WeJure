@@ -8,7 +8,7 @@ import { finalizeEvent, generateSecretKey } from 'nostr-tools/pure';
 import { crashAll, startAll, wejureServer } from './harness.js';
 import { KIND, createPool, publish } from 'wejure-nostr/core.js';
 import { register } from 'wejure-nostr/account.js';
-import { forgetCache } from 'wejure-nostr/cache.js';
+import { decryptAll, forgetCache } from 'wejure-nostr/cache.js';
 import { saveMirrors, synced } from 'wejure-nostr/sync.js';
 import * as C from 'wejure-nostr/communities.js';
 
@@ -76,20 +76,28 @@ describe('saved mirrors', () => {
 
     test('the saved copy shows nothing of what it holds or which values it follows', async () => {
         const db = await new Promise((resolve) => { const req = indexedDB.open(`wejure-${alice.pk}`); req.onsuccess = () => resolve(req.result); });
-        const keys = await new Promise((resolve) => {
-            const req = db.transaction('mirrored').objectStore('mirrored').getAllKeys();
+        const envelopeId = 'ab'.repeat(32);
+        await decryptAll(alice, [{ id: envelopeId }], () => ({ text: 'secret' }));
+        const keysOf = (store) => new Promise((resolve) => {
+            const req = db.transaction(store).objectStore(store).getAllKeys();
             req.onsuccess = () => resolve(req.result);
         });
+        const [mirrored, decrypted] = [await keysOf('mirrored'), await keysOf('decrypted')];
         db.close();
-        assert.ok(keys.length > 0);
-        for (const k of keys) assert.match(k, /^[0-9a-f]{64}(:[0-9a-f]{16})?$/);
+        assert.ok(mirrored.length > 0 && decrypted.length > 0);
+        for (const k of mirrored) assert.match(k, /^[0-9a-f]{64}(:[0-9a-f]{16})?$/);
+        // decrypted entries are keyed by an HMAC, not by the event id a relay could look up
+        for (const k of decrypted) assert.match(k, /^[0-9a-f]{64}$/);
+        assert.ok(!decrypted.includes(envelopeId));
     });
 
-    test('with every relay down, a new page still opens a community from the saved copy', async () => {
+    test('with every relay down, a new page still opens a community, checkpoint and all, from the saved copy', async () => {
         const club = await C.createCommunity(alice, { name: 'Book Club' });
         const general = C.channelByName(club, 'general');
         await C.sendMessage(club, general, 'june', 'Dune, chapter one');
+        assert.equal(await C.maintain(club, { every: 1 }), 'proposed');   // a checkpoint: its snapshot is kept too
         const ctx = await C.openCommunity(alice, club.ref);
+        assert.ok(ctx.base);
         assert.equal((await C.readChannel(ctx, general)).length, 1);
         await saveMirrors(alice);
 
@@ -97,6 +105,7 @@ describe('saved mirrors', () => {
         try {
             const page = reload(alice);
             const offline = await C.openCommunity(page, club.ref);
+            assert.equal(offline.base?.checkpoint.id, ctx.base.checkpoint.id);
             assert.equal(offline.state.name, 'Book Club');
             assert.deepEqual((await C.readChannel(offline, general)).map((m) => m.text), ['Dune, chapter one']);
         } finally {

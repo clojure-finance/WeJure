@@ -1,9 +1,10 @@
 // Posts, follows, the feed, blocking and direct messages: all standard Nostr.
 import { getConversationKey, v2 as nip44 } from 'nostr-tools/nip44';
+import * as nip04 from 'nostr-tools/nip04';
 import { unwrapEvent, wrapEvent } from 'nostr-tools/nip59';
 import { KIND, after, deletedIds, latest, publish, query, sign } from './core.js';
 import { getEventHash } from 'nostr-tools/pure';
-import { subscribe } from './live.js';
+import { debounce, subscribe } from './live.js';
 import { decryptAll } from './cache.js';
 import { synced, watched } from './sync.js';
 
@@ -43,19 +44,41 @@ export const unfollow = (s, pk) => changeFollows(s, (pks) => pks.filter((p) => p
 // so relays and other users cannot see who blocks whom.
 const muteEvent = (s) => latest(s.pool, s.relays, { kinds: [KIND.MUTE_LIST], authors: [s.pk] });
 
-function muted(s, e) {
-    if (!e || !e.content) return new Set();
-    const tags = JSON.parse(nip44.decrypt(e.content, getConversationKey(s.sk, s.pk)));
-    return new Set(tags.filter((t) => t[0] === 'p').map((t) => t[1]));
+// A mute list's private entries: encrypted to its owner, with NIP-44 or (by
+// other Nostr apps) NIP-04; [] if there are none or they cannot be read.
+function secretEntries(s, e) {
+    if (!e?.content) return [];
+    for (const decrypt of [() => nip44.decrypt(e.content, getConversationKey(s.sk, s.pk)), () => nip04.decrypt(s.sk, s.pk, e.content)]) {
+        try {
+            const tags = JSON.parse(decrypt());
+            if (Array.isArray(tags)) return tags.filter((t) => Array.isArray(t) && typeof t[1] === 'string');
+        } catch { /* the other scheme, or not readable */ }
+    }
+    return [];
 }
+
+// The people a mute list mutes, privately or (as other apps can) publicly.
+const muted = (s, e) => new Set([...secretEntries(s, e), ...(e?.tags ?? [])].filter((t) => t[0] === 'p').map((t) => t[1]));
 
 export const blocked = async (s) => muted(s, await muteEvent(s));
 
+// Adds pk to the private entries; public entries stay as they are.
 export async function block(s, pk) {
     const prev = await muteEvent(s);
-    const list = new Set([...muted(s, prev), pk]);
-    const content = nip44.encrypt(JSON.stringify([...list].map((p) => ['p', p])), getConversationKey(s.sk, s.pk));
-    return publish(s.pool, s.relays, sign(s, { kind: KIND.MUTE_LIST, content, created_at: after(prev) }));
+    const secret = secretEntries(s, prev);
+    if (!secret.some((t) => t[0] === 'p' && t[1] === pk)) secret.push(['p', pk]);
+    const content = nip44.encrypt(JSON.stringify(secret), getConversationKey(s.sk, s.pk));
+    return publish(s.pool, s.relays, sign(s, { kind: KIND.MUTE_LIST, tags: prev?.tags ?? [], content, created_at: after(prev) }));
+}
+
+// Of posts, those neither deleted by their author nor by a blocked user.
+async function visible(s, posts) {
+    if (!posts.length) return [];
+    const authors = [...new Set(posts.map((p) => p.pubkey))];
+    const deletions = await query(s.pool, s.relays, { kinds: [KIND.DELETION], authors, '#e': posts.map((p) => p.id) });
+    const deleted = deletedIds([...posts, ...deletions]);
+    const blockedSet = await blocked(s);
+    return posts.filter((p) => !deleted.has(p.id) && !blockedSet.has(p.pubkey));
 }
 
 // A page cursor: "<seconds>:<ids>", the time of the page's oldest posts and
@@ -77,17 +100,20 @@ export async function feedPage(s, { until: cursor, limit = 10, authors } = {}) {
     const { until, skip } = parseCursor(cursor);
     const fetched = await query(s.pool, s.relays, { kinds: [KIND.POST], authors, until, limit: limit + skip.length });
     const page = fetched.filter((p) => !skip.includes(p.id)).slice(0, limit);
-    const deletions = page.length
-        ? await query(s.pool, s.relays, { kinds: [KIND.DELETION], authors, '#e': page.map((p) => p.id) })
-        : [];
-    const deleted = deletedIds([...page, ...deletions]);
-    const blockedSet = await blocked(s);
     const last = page.at(-1)?.created_at;
     const atLast = [...(last === until ? skip : []), ...page.filter((p) => p.created_at === last).map((p) => p.id)];
     return {
-        posts: page.filter((p) => !deleted.has(p.id) && !blockedSet.has(p.pubkey)),
+        posts: await visible(s, page),
         next: page.length === limit ? `${last}:${atLast.join(',')}` : null,
     };
+}
+
+// The recent posts of the people s follows (the newest 500 of each relay)
+// that contain text, newest first, without deleted posts or blocked users.
+export async function searchPosts(s, text) {
+    const events = await query(s.pool, s.relays, { kinds: [KIND.POST], authors: await follows(s), limit: 500 });
+    const q = text.toLowerCase();
+    return visible(s, events.filter((e) => e.content.toLowerCase().includes(q)));
 }
 
 // Direct messages (NIP-17): the message is signed by the sender, encrypted to the
@@ -119,10 +145,12 @@ export async function unwrapAll(s) {
     })).filter(Boolean);
 }
 
-// The conversation between s and peerPk, oldest first.
+// The conversation between s and peerPk, oldest first. A message wrapped
+// twice (a sender may do so) counts once.
 export async function conversation(s, peerPk) {
     const to = (r) => r.tags.find((t) => t[0] === 'p')?.[1];
-    return (await unwrapAll(s))
+    const rumors = new Map((await unwrapAll(s)).map((r) => [r.id, r]));
+    return [...rumors.values()]
         .filter((r) => r.kind === KIND.DM)
         .filter((r) => (r.pubkey === peerPk && to(r) === s.pk) || (r.pubkey === s.pk && to(r) === peerPk))
         .map((r) => ({ id: r.id, from: r.pubkey, text: r.content, at: r.created_at,
@@ -140,7 +168,8 @@ export function watchFeed(s, authors, { onPost, onDelete }) {
 }
 
 // Calls onChange whenever something new is gift-wrapped to s (a direct message,
-// or a key bundle for a community). It listens to the mirror unwrapAll reads.
+// or a key bundle for a community), once per burst. It listens to the mirror
+// unwrapAll reads.
 export function watchInbox(s, onChange) {
-    return watched(s, s.relays, { kinds: [KIND.GIFT_WRAP] }, '#p', [s.pk], onChange);
+    return watched(s, s.relays, { kinds: [KIND.GIFT_WRAP] }, '#p', [s.pk], debounce(() => onChange()));
 }

@@ -8,8 +8,9 @@
 // then fetches what the relay already holds, in pages, so no result limit hides
 // older events. From then on the subscription delivers every new event, and a
 // sync only asks the relay for nothing, which it answers after everything it
-// sent before (relays handle a connection's messages in order, and ours sends
-// new events to subscribers before acknowledging them to their author).
+// sent before on that connection (and ours sends a new event to subscribers
+// before acknowledging it to its author, so a sync made after someone was
+// told their event is stored also has it).
 //
 // If the subscription drops (the relay restarts, or closes it), the next sync
 // subscribes again and catches up from the value's mark: the creation time of
@@ -39,7 +40,7 @@
 // window leaves a gap below it, so the floor moves up to the window and
 // older() fills the gap.
 //
-// A full mirror can be synced from a time on (since): then only events dated
+// A full mirror can be synced from a time on (`from`): then only events dated
 // from then on are fetched, and its floor records that; a later sync from an
 // earlier time fetches the difference. Communities use it to skip the ops
 // before a checkpoint.
@@ -54,6 +55,8 @@ const MAYBE_MORE = 100;
 // Relays cap how many filters one subscription may have (ours at 20).
 const FILTERS_PER_SUBSCRIPTION = 10;
 const MAX_WAIT = 3000;
+const MAX_PAGES = 200;      // per request chunk: a relay that keeps sending full pages is cut off there
+const GROUP_SPAN = 3600;    // s: catch-ups starting within this span share a request
 const NOTHING = { ids: ['0'.repeat(64)], limit: 1 };
 const SAVE_AFTER = 500;   // ms: changes to a bucket are saved together
 // Paged mirrors: events per page. A shorter answer means the relay has no
@@ -111,7 +114,7 @@ async function fetchAll(pool, url, filter) {
     const out = new Map();
     for (const part of chunked(filter)) {
         let until = part.until;
-        for (;;) {
+        for (let pages = 0; pages < MAX_PAGES; pages++) {
             const page = await request(pool, url, { ...part, until, limit: PAGE });
             if (page === null) return null;
             let fresh = 0;
@@ -123,8 +126,9 @@ async function fetchAll(pool, url, filter) {
             }
             if (page.length < MAYBE_MORE || oldest === Infinity) break;
             // The next page starts at the oldest second again, since more events
-            // may share it; if that second alone fills a page, it is skipped.
-            until = fresh ? oldest : oldest - 1;
+            // may share it, but only once: a second that fills pages (a flood, or
+            // a relay that keeps sending new events dated so) is cut short there.
+            until = fresh && oldest !== until ? oldest : oldest - 1;
         }
     }
     return [...out.values()];
@@ -174,6 +178,7 @@ function createMirror(pool, base, field, store, paged) {
                 url,
                 marks: new Map(),     // value -> mark (seconds)
                 floors: new Map(),    // paged: value -> everything dated after this is here (0: all)
+                fetched: new Set(),   // values fetched here before, this page session
                 covered: new Set(),   // values caught up and followed live since
                 live: null,           // the live subscription: {values, close}
                 queue: Promise.resolve(),
@@ -233,7 +238,9 @@ function createMirror(pool, base, field, store, paged) {
     }
 
     // Files e under the values it matches that the mirror follows; returns them.
-    function add(e) {
+    // notify: tell listeners, unless e is history a read fetched (first pages,
+    // older pages), which the reader shows anyway.
+    function add(e, { notify = true } = {}) {
         if (!matchFilter(base, e)) return [];
         const vs = valuesOf(e).filter((v) => buckets.has(v));
         const fresh = [];
@@ -243,7 +250,7 @@ function createMirror(pool, base, field, store, paged) {
             changed(v, e);
             fresh.push(v);
         }
-        for (const l of fresh.length ? listeners : []) {
+        for (const l of fresh.length && notify ? listeners : []) {
             if (!fresh.some((v) => l.values.has(v))) continue;
             try { l.fn(e); } catch (err) { console.warn('a listener failed:', err); }
         }
@@ -267,8 +274,9 @@ function createMirror(pool, base, field, store, paged) {
         restoreLater(r.url);
     }
 
-    // The values listeners follow at url.
+    // The values listeners follow at url, and whether the live subscription there has them all.
     const listenedAt = (url) => [...new Set([...listeners].filter((l) => l.relays.includes(url)).flatMap((l) => [...l.values]))];
+    const followsAll = (url, values) => !!at(url).live && values.every((v) => at(url).live.values.has(v));
 
     // Subscribes at url again after a pause, and again after that until it
     // works, while anyone listens there. Catches up the values that have been
@@ -282,7 +290,7 @@ function createMirror(pool, base, field, store, paged) {
             const read = paged ? values.filter((v) => at(url).floors.has(v)) : values;
             if (read.length) await sync([url], read);
             if (read.length < values.length) await follow([url], values);
-            if (!at(url).live) restoreLater(url);
+            if (!followsAll(url, listenedAt(url))) restoreLater(url);
         }, RETRY_AFTER));
     }
 
@@ -294,7 +302,8 @@ function createMirror(pool, base, field, store, paged) {
         const openSubs = new Set();   // closing a subscription twice upsets nostr-tools' count of them
         const live = {
             values: new Set(values),
-            close: () => { const subs = [...openSubs]; openSubs.clear(); subs.forEach((sub) => sub.close()); },
+            dead: false,
+            close: () => { live.dead = true; const subs = [...openSubs]; openSubs.clear(); subs.forEach((sub) => sub.close()); },
         };
         const onevent = (e) => {
             if (!checkEvent(e)) return;
@@ -310,43 +319,65 @@ function createMirror(pool, base, field, store, paged) {
             if (!sub) { live.close(); return null; }
             openSubs.add(sub);
         }
-        return live;
+        return live.dead ? null : live;   // a part that closed while the rest opened leaves values unfollowed
     }
 
-    // Fetches what url holds for values from their marks on; whether it answered.
-    // from: for a full mirror, the time values never fetched start at (0 or
-    // undefined: the beginning).
+    // Where catching up value v at url starts: after its mark (less how far
+    // back events can be dated), or above its floor if no event came yet, or
+    // at the beginning if it was fetched and had none; null if it was never
+    // fetched there.
+    const startOf = (r, v) => {
+        const mark = r.marks.get(v) ?? 0;
+        if (mark) return mark - lateness(base);
+        const floor = r.floors.get(v);
+        if (floor) return floor + 1 - lateness(base);
+        return r.floors.has(v) || r.fetched.has(v) ? 0 : null;
+    };
+
+    // Fetches what url holds for values from where they start (startOf);
+    // whether it answered. Values never fetched start at the newest page
+    // (paged) or at `from` (full mirrors; 0 or undefined: the beginning).
+    // Values whose starts lie close together share a request, and a few
+    // requests run at a time, so a catch-up for many values (a community's
+    // authors) cannot flood the relay's subscription limit.
     async function catchUp(url, r, values, from) {
-        const groups = new Map();   // mark -> values, so values with the same mark share a request
-        for (const v of values) {
-            const mark = r.marks.get(v) ?? 0;
-            if (!groups.has(mark)) groups.set(mark, []);
-            groups.get(mark).push(v);
+        const first = values.filter((v) => startOf(r, v) === null);
+        const groups = first.length ? [{ first: true, since: !paged && from ? from : undefined, values: first }] : [];
+        const later = values.filter((v) => startOf(r, v) !== null).map((v) => [startOf(r, v), v]).sort((a, b) => a[0] - b[0]);
+        for (const [start, v] of later) {
+            const g = groups.at(-1);
+            if (g && !g.first && start - g.since <= GROUP_SPAN) g.values.push(v);
+            else groups.push({ first: false, since: Math.max(0, start), values: [v] });
         }
-        const results = await Promise.all([...groups].map(async ([mark, vs]) => {
-            const asked = now();
-            const first = !paged && !mark && from ? vs.filter((v) => !r.floors.has(v)) : [];
-            const since = mark ? mark - lateness(base) : first.length ? from : undefined;
-            const pages = paged
-                ? await fetchPages(url, { ...base, since }, vs)
-                : await fetchAll(pool, url, { ...base, [field]: vs, since }).then((events) => events && [{ values: vs, events }]);
-            if (pages === null) return false;
-            const newest = new Map();
-            for (const page of pages) {
-                for (const e of page.events) {
-                    for (const v of add(e)) newest.set(v, Math.max(newest.get(v) ?? 0, e.created_at));
-                }
-                if (!paged) continue;
-                for (const v of page.values) {
-                    if (!r.floors.has(v)) setFloor(r, v, page.floor);                            // first page
-                    else if (page.floor) setFloor(r, v, Math.max(r.floors.get(v), page.floor)); // a gap below
-                }
+        let answered = true;
+        for (let i = 0; i < groups.length; i += 4) {
+            const results = await Promise.all(groups.slice(i, i + 4).map((g) => catchUpGroup(url, r, g, from)));
+            answered &&= results.every(Boolean);
+        }
+        return answered;
+    }
+
+    async function catchUpGroup(url, r, { first, since, values: vs }, from) {
+        const asked = now();
+        const pages = paged
+            ? await fetchPages(url, { ...base, since }, vs)
+            : await fetchAll(pool, url, { ...base, [field]: vs, since }).then((events) => events && [{ values: vs, events }]);
+        if (pages === null) return false;
+        const newest = new Map();
+        for (const page of pages) {
+            for (const e of page.events) {
+                for (const v of add(e, { notify: !first })) newest.set(v, Math.max(newest.get(v) ?? 0, e.created_at));
             }
-            for (const v of first) setFloor(r, v, from - 1);
-            advance(r, vs, newest, asked);   // a future-dated event cannot push a mark ahead
-            return true;
-        }));
-        return results.every(Boolean);
+            if (!paged) continue;
+            for (const v of page.values) {
+                if (!r.floors.has(v)) setFloor(r, v, page.floor);                            // first page
+                else if (page.floor) setFloor(r, v, Math.max(r.floors.get(v), page.floor)); // a gap below
+            }
+        }
+        if (first && !paged && from) for (const v of vs) if (!r.floors.has(v)) setFloor(r, v, from - 1);
+        advance(r, vs, newest, asked);   // a future-dated event cannot push a mark ahead
+        vs.forEach((v) => r.fetched.add(v));
+        return true;
     }
 
     // Full mirrors: fetches what is missing between from (0: the beginning)
@@ -363,7 +394,7 @@ function createMirror(pool, base, field, store, paged) {
         for (const [floor, vs] of groups) {
             const events = await fetchAll(pool, url, { ...base, [field]: vs, since: from || undefined, until: floor });
             if (events === null) return false;
-            events.forEach(add);
+            for (const e of events) add(e, { notify: false });
             for (const v of vs) setFloor(r, v, want);
         }
         return true;
@@ -412,7 +443,7 @@ function createMirror(pool, base, field, store, paged) {
             const pages = await fetchPages(url, { ...base, until: floor }, vs);
             if (pages === null) continue;
             for (const page of pages) {
-                page.events.forEach(add);
+                for (const e of page.events) add(e, { notify: false });
                 for (const v of page.values) setFloor(r, v, page.floor);
             }
         }
@@ -491,7 +522,7 @@ function createMirror(pool, base, field, store, paged) {
         const l = { relays: relayUrls(urls), values: new Set(values), fn };
         listeners.add(l);
         (paged ? follow(l.relays, values) : sync(l.relays, values)).then(() => {
-            if (listeners.has(l)) l.relays.filter((url) => !at(url).live).forEach(restoreLater);
+            if (listeners.has(l)) l.relays.filter((url) => !followsAll(url, values)).forEach(restoreLater);
         });
         return () => listeners.delete(l);
     }

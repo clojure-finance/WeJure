@@ -9,4 +9,8 @@ const children = [
 const stop = () => children.forEach((c) => c.kill());
 process.on('SIGINT', stop);
 process.on('SIGTERM', stop);
-children.forEach((c) => c.on('exit', (code) => { stop(); process.exitCode = code ?? 0; }));
+// The first to exit decides the exit code; the other, killed by stop(), does not.
+children.forEach((c) => c.on('exit', (code) => {
+    process.exitCode ??= code ?? 1;
+    stop();
+}));

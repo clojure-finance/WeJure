@@ -100,7 +100,10 @@ try {
         const { ref, ops } = syntheticLog(n);
         await time(`resolve ${n} ops (pure, no I/O)`, () => resolve(ref, ops));
     }
+} catch (e) {
+    console.error(e);
+    process.exitCode = 1;
 } finally {
     await crashAll([server], { wipe: true });
-    process.exit(0);
+    process.exit();   // the relay pool would keep the process alive
 }

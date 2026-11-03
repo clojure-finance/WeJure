@@ -4,6 +4,7 @@
 // Several accounts can claim one username; login tries each claim.
 import { generateSecretKey, getPublicKey } from 'nostr-tools/pure';
 import { decrypt as nip49Decrypt, encrypt as nip49Encrypt } from 'nostr-tools/nip49';
+import { bech32 } from '@scure/base';
 import { KIND, after, createPool, latest, publish, query, relayUrls, sign } from './core.js';
 
 const accountTag = (alias) => `wejure/account/${alias.toLowerCase()}`;
@@ -25,7 +26,7 @@ export async function publishAccount(s, password, { picture = '' } = {}) {
         { kind: KIND.RELAY_LIST, tags: s.relays.map((r) => ['r', r]) },
         { kind: KIND.FOLLOWS, tags: [['p', s.pk]] },   // users follow themselves, so their posts are in their feed
         { kind: KIND.MEDIA_SERVERS, tags: s.mediaServers.map((u) => ['server', u]) },
-        { kind: KIND.APP_DATA, tags: [['d', accountTag(s.alias)]], content: nip49Encrypt(s.sk, password, 16) },
+        { kind: KIND.APP_DATA, tags: [['d', accountTag(s.alias)]], content: nip49Encrypt(s.sk, password, LOG_N) },
     ];
     const now = Math.floor(Date.now() / 1000);   // all different kinds, so the same time for all
     for (const t of templates) await publish(s.pool, s.relays, sign(s, { ...t, created_at: now }));
@@ -35,11 +36,26 @@ export async function publishAccount(s, password, { picture = '' } = {}) {
 export const register = (relays, alias, password, { mediaServers = [], picture = '' } = {}) =>
     publishAccount(newAccount(relays, alias, { mediaServers }), password, { picture });
 
+const LOG_N = 16;      // scrypt cost of WeJure's password encryption (2^16)
+const MAX_CLAIMS = 10;
+
+// Whether a claim's key is encrypted as WeJure does it. Anyone can publish a
+// claim for any username, with a scrypt cost of their choosing: one at 2^20
+// costs a gigabyte and seconds to try, so only WeJure's cost is tried.
+function wejureClaim(claim) {
+    try {
+        const { prefix, words } = bech32.decode(claim.content, 5000);
+        return prefix === 'ncryptsec' && bech32.fromWords(words)[1] === LOG_N;
+    } catch {
+        return false;
+    }
+}
+
 // Logs in from a device that knows nothing but the relays, the username and the password.
 export async function login(relays, alias, password, { mediaServers = [] } = {}) {
     const pool = createPool();
-    const claims = await query(pool, relays, { kinds: [KIND.APP_DATA], '#d': [accountTag(alias)] });
-    for (const claim of claims) {
+    const claims = (await query(pool, relays, { kinds: [KIND.APP_DATA], '#d': [accountTag(alias)] })).filter(wejureClaim);
+    for (const claim of claims.slice(0, MAX_CLAIMS)) {
         try {
             const sk = nip49Decrypt(claim.content, password);
             if (getPublicKey(sk) === claim.pubkey) return session(sk, alias, relays, mediaServers, pool);
@@ -69,6 +85,16 @@ function profileOf(e) {
 export async function profile(s, pk) {
     const e = await latest(s.pool, s.relays, { kinds: [KIND.PROFILE], authors: [pk] });
     return e ? profileOf(e) : null;
+}
+
+// The profiles of pks (the raw fields, unchecked), in one query: Map pk ->
+// profile, leaving out those that have none.
+export async function profiles(s, pks) {
+    const out = new Map();
+    for (const e of await query(s.pool, s.relays, { kinds: [KIND.PROFILE], authors: pks })) {
+        if (!out.has(e.pubkey)) out.set(e.pubkey, profileOf(e));   // newest first
+    }
+    return out;
 }
 
 export async function updateProfile(s, fields) {

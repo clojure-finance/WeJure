@@ -9,7 +9,7 @@ import { getConversationKey, v2 as nip44 } from 'nostr-tools/nip44';
 import { wrapEvent } from 'nostr-tools/nip59';
 import { hexToBytes } from 'nostr-tools/utils';
 import { KIND, after, checkEvent, latest, publish, query, randomHex, relayUrls, sha256Hex, sign } from './core.js';
-import { decryptAll } from './cache.js';
+import { cacheOf, decryptAll } from './cache.js';
 import { hasOlder as olderExists, older, synced, watched } from './sync.js';
 import { relaysOf } from './account.js';
 import { unwrapAll } from './social.js';
@@ -66,13 +66,19 @@ async function envelope(key, inner, { sender, mark = false } = {}) {
 // from a time on (after a checkpoint) would miss it.
 async function openEach(s, envs, keys, kind) {
     const byTag = new Map(await Promise.all(keys.map(async (k) => [await tagOf(k.key), k.key])));
-    // each envelope is decrypted and its content's signature checked once (cache.js)
-    const inners = await decryptAll(s, envs, (env) => {
-        const key = byTag.get(env.tags.find((t) => t[0] === 'h')?.[1]);
-        const inner = JSON.parse(nip44.decrypt(env.content, hexToBytes(key)));
+    const keyOf = (env) => byTag.get(env.tags.find((t) => t[0] === 'h')?.[1]);
+    // each envelope is decrypted and its content's signature checked once
+    // (cache.js); one whose key is not at hand is left alone, not remembered
+    // as undecryptable
+    const openable = envs.filter(keyOf);
+    const inners = new Map((await decryptAll(s, openable, (env) => {
+        const inner = JSON.parse(nip44.decrypt(env.content, hexToBytes(keyOf(env))));
         return checkEvent(inner) ? inner : null;
+    })).map((inner, i) => [openable[i], inner]));
+    return envs.map((env) => {
+        const inner = inners.get(env);
+        return inner?.kind === kind && !(kind === KIND.COMMUNITY_OP && env.created_at < inner.created_at) ? inner : null;
     });
-    return inners.map((inner, i) => (inner?.kind === kind && !(kind === KIND.COMMUNITY_OP && envs[i].created_at < inner.created_at) ? inner : null));
 }
 
 const openAll = async (s, envs, keys, kind) => (await openEach(s, envs, keys, kind)).filter(Boolean);
@@ -104,11 +110,23 @@ async function changeList(s, change) {
     await publish(s.pool, s.relays, sign(s, { kind: KIND.APP_DATA, tags: [['d', LIST]], content, created_at: after(prev) }));
 }
 
-const remember = (s, ref, relays) => changeList(s, (list) => [...list.filter((e) => e.ref !== ref), { ref, relays }]);
+// Entries are {ref, relays, checkpoint}: checkpoint is the latest one the
+// user's devices accepted (an anchor for new devices; see acceptedChain).
+const remember = (s, ref, relays) => changeList(s, (list) => [...list.filter((e) => e.ref !== ref), { ...list.find((e) => e.ref === ref), ref, relays }]);
 const forget = (s, ref) => changeList(s, (list) => list.filter((e) => e.ref !== ref));
 
+// Records ctx's latest accepted checkpoint in the user's list, if the
+// community is in it and the list has an older one.
+async function rememberTip(ctx) {
+    const tip = ctx.chain.at(-1)?.id;
+    if (!tip || !ctx.listed || ctx.listed.checkpoint === tip) return;
+    await changeList(ctx.s, (list) => list.map((e) => (e.ref === ctx.ref ? { ...e, checkpoint: tip } : e)));
+    ctx.listed = { ...ctx.listed, checkpoint: tip };
+}
+
 // Key bundles addressed to s: ref -> {relays, keys: Map keyId -> key,
-// labels: Map keyId -> Set of the scopes bundles named for it, from, ...}.
+// labels: Map keyId -> Set of the scopes bundles named for it, from, anchor:
+// the latest checkpoint the newest bundle's sender had accepted}.
 async function bundles(s) {
     const out = new Map();
     for (const r of await unwrapAll(s)) {
@@ -119,6 +137,10 @@ async function bundles(s) {
         const entry = out.get(b.ref) ?? { relays: [], keys: new Map(), labels: new Map(), from: new Set() };
         entry.relays = union(entry.relays, b.relays);
         entry.from.add(r.pubkey);
+        if (typeof b.checkpoint === 'string' && r.created_at >= (entry.anchorAt ?? 0)) {
+            entry.anchor = b.checkpoint;
+            entry.anchorAt = r.created_at;
+        }
         // a bundle's scope labels are not trusted: openCommunity takes each key's
         // scope from the signed op log, and uses the labels only to decide what
         // to fetch first
@@ -183,8 +205,11 @@ async function markedOps(s, relays, ref, keys) {
 }
 
 // The text a checkpoint stored in parts (event ids, in order), or null if a
-// part is missing or the text does not have the hash.
+// part is missing or the text does not have the hash. Kept in the device
+// cache (by its hash), so a community opens without relays after a reload.
 async function partsText(s, relays, keys, ids, hash) {
+    const cached = (await cacheOf(s).getMany([`text:${hash}`])).get(`text:${hash}`);
+    if (typeof cached === 'string' && (await sha256Hex(utf8(cached))) === hash) return cached;
     if (!ids.length) return null;
     const byId = new Map((await query(s.pool, relays, { ids })).map((e) => [e.id, e]));
     const parts = ids.map((id) => byId.get(id));
@@ -192,12 +217,14 @@ async function partsText(s, relays, keys, ids, hash) {
     const plain = await Promise.all(parts.map(async (e) => (e.kind === KIND.ENVELOPE ? (await openEach(s, [e], keys, KIND.SNAPSHOT_PART))[0] : e)));
     if (plain.some((e) => e?.kind !== KIND.SNAPSHOT_PART)) return null;
     const text = plain.map((e) => e.content).join('');
-    return (await sha256Hex(utf8(text))) === hash ? text : null;
+    if ((await sha256Hex(utf8(text))) !== hash) return null;
+    await cacheOf(s).setMany([[`text:${hash}`, text]]);
+    return text;
 }
 
 // Where a base's covered index goes once loaded (see ensureCovered).
 function coveredHolder() {
-    const holder = { index: null, loading: null };
+    const holder = { index: null, complete: false, loading: null, triedAt: 0 };
     return Object.assign(holder, {
         has: (id) => holder.index?.has(id) ?? false,
         isAncestor: (a, b) => holder.index?.isAncestor(a, b) ?? false,
@@ -219,7 +246,9 @@ function baseFor(s, relays, ref, keys, chain, i) {
             if (!text) {
                 const prev = i > 0 ? await baseFor(s, relays, ref, keys, chain, i - 1) : null;
                 if (i > 0 && !prev) return null;
-                const at = resolve(ref, await opsFrom(s, relays, ref, keys, prev?.checkpoint.created_at ?? 0), { base: prev, upTo: cp.id });
+                const ops = new Map((await opsFrom(s, relays, ref, keys, prev?.checkpoint.created_at ?? 0)).map((e) => [e.id, e]));
+                if (!prev) await genesisExtras(s, relays, ref, ops);
+                const at = resolve(ref, [...ops.values()], { base: prev, upTo: cp.id });
                 text = at && JSON.stringify(snapshotOf(at));
                 if (!text || (await sha256Hex(utf8(text))) !== body.hash) return null;
             }
@@ -234,11 +263,13 @@ function baseFor(s, relays, ref, keys, chain, i) {
 
 const stateKeysOf = (ctx) => [...ctx.keys.values()].filter((k) => k.scope === 'state');
 
-// Loads the covered indexes of ctx's checkpoints, once, so that old messages
-// (which name ops from before the checkpoint) can be judged.
+// Loads the covered indexes of ctx's checkpoints, so that old messages (which
+// name ops from before the checkpoint) can be judged. If one cannot be
+// fetched, what was fetched serves meanwhile (messages naming the missing
+// epoch's ops do not count) and it is tried again a minute later.
 async function ensureCovered(ctx) {
     const holder = ctx.base?.covered;
-    if (!holder || holder.index) return;
+    if (!holder || holder.complete || (!holder.loading && Date.now() - holder.triedAt < 60000)) return;
     holder.loading ??= (async () => {
         const epochs = [];
         for (const cp of ctx.chain) {
@@ -247,8 +278,22 @@ async function ensureCovered(ctx) {
             if (text) epochs.push({ offset: body.offset, entries: JSON.parse(text) });
         }
         holder.index = coveredIndex(epochs);
-    })().catch(() => { holder.loading = null; });
+        holder.complete = epochs.length === ctx.chain.length;
+    })().catch(() => {}).finally(() => {
+        holder.loading = null;
+        holder.triedAt = Date.now();
+    });
     await holder.loading;
+}
+
+// The genesis-time extras: the founder's ops, asked for separately so that a
+// flood of ops from others (anyone can tag an open community), all dated the
+// same second, cannot crowd the genesis op out of the pages (sync.js); and
+// plaintext parents still missing, by id.
+async function genesisExtras(s, relays, ref, ops) {
+    const founder = ref.split(':')[0];
+    for (const e of await query(s.pool, relays, { ...OPS, '#h': [ref], authors: [founder], limit: 5000 })) ops.set(e.id, e);
+    await fetchParents(s, relays, ops);
 }
 
 // `known`: an earlier context of the same community. Ops are never withdrawn,
@@ -263,7 +308,7 @@ export async function openCommunity(s, ref, { relays, known } = {}) {
     const where = union(relays ?? [], b?.relays ?? [], listed?.relays ?? []);
     const rels = where.length ? where : s.relays;
     const bundled = [...(b?.keys ?? new Map()).entries()];   // [keyId, key]
-    const founder = ref.split(':')[0];
+    const anchor = known?.chain.at(-1)?.id ?? listed?.checkpoint ?? b?.anchor ?? null;
     const ops = new Map(known?.ops);
     // Sealed ops are under the state keys, and only the log can say which keys
     // those are (bundle labels are not trusted). So: first the keys the log
@@ -274,24 +319,19 @@ export async function openCommunity(s, ref, { relays, known } = {}) {
     const tried = new Set(bundled.map(([id]) => id).filter((id) => named.has(id) || b?.labels.get(id)?.has('state')));
     let state = null;
     let chain = [];
+    let conflict = false;
     let base = null;
     let marked = [];
     for (let round = 0; ; round++) {
         const keys = bundled.filter(([id]) => tried.has(id)).map(([, key]) => ({ key }));
         marked = await markedOps(s, rels, ref, keys);
-        chain = acceptedChain(ref, marked);
+        ({ chain, conflict } = acceptedChain(ref, marked, { anchor }));
         base = chain.length ? await baseFor(s, rels, ref, keys, chain, chain.length - 1) : null;
         if (chain.length && !base) throw new Error('the community\'s latest checkpoint cannot be loaded right now');
         for (const e of [...await opsFrom(s, rels, ref, keys, base ? base.checkpoint.created_at : 0), ...marked]) ops.set(e.id, e);
         if (!base) {
-            // On the first open the founder's ops are asked for separately too, so
-            // that a flood of ops from others (anyone can tag an open community),
-            // all dated the same second, cannot crowd the genesis op out of the
-            // pages (sync.js); and plaintext parents still missing are fetched by id.
-            if (!known) {
-                for (const e of await query(s.pool, rels, { ...OPS, '#h': [ref], authors: [founder], limit: 5000 })) ops.set(e.id, e);
-            }
-            await fetchParents(s, rels, ops);
+            if (!known) await genesisExtras(s, rels, ref, ops);
+            else await fetchParents(s, rels, ops);
         }
         const same = known && known.ops.size === ops.size && (known.base?.checkpoint.id ?? null) === (base?.checkpoint.id ?? null);
         state = same ? known.state : resolve(ref, [...ops.values()], { base });
@@ -305,7 +345,7 @@ export async function openCommunity(s, ref, { relays, known } = {}) {
     // that op gives: keys authenticate themselves through the log.
     const scopeOf = new Map([...state.keyOps].flatMap(([scope, ks]) => ks.map((k) => [k.keyId, scope])));
     const keys = new Map(bundled.filter(([id]) => scopeOf.has(id)).map(([id, key]) => [id, { scope: scopeOf.get(id), key }]));
-    return { s, ref, relays: union(state.relays.length ? state.relays : rels), state, keys, ops, chain, base, marked };
+    return { s, ref, relays: union(state.relays.length ? state.relays : rels), state, keys, ops, chain, conflict, base, marked, listed };
 }
 
 // Reloads ctx. Reloads run one at a time: a call made while one runs waits for
@@ -383,22 +423,24 @@ function currentKey(ctx, scope) {
 
 const isCheckpointOp = (body) => body.type === 'checkpoint' || body.type === 'approve-checkpoint';
 
-// Publishes an op on the heads of `on` (default: the current state), dated no
-// earlier than they are (an op dated before a checkpoint it builds on does
-// not count; see postOrder). Checkpoint ops are counted apart
-// (acceptedChain), so they need no key heal first and are not checked here.
-async function publishOp(ctx, body, { on } = {}) {
+// Publishes an op on `parents` (default: the valid heads, see resolve), dated
+// no earlier than the latest checkpoint (an op dated before the checkpoint it
+// builds on does not count; see postOrder). Not "no earlier than its parents":
+// one op dated far ahead would then drag every later op's date along.
+// Checkpoint ops are counted apart (acceptedChain), so they need no key heal
+// first and are not checked here.
+async function publishOp(ctx, body, { parents } = {}) {
     const { s, state } = ctx;
     const checkpointOp = isCheckpointOp(body);
     if (!checkpointOp && state.encrypted('state') && body.type !== 'rekey' && state.needsRekey('state') && state.isMember(s.pk)) {
         await rekey(ctx, 'state');
     }
-    const at = on ?? ctx.state;
+    const at = ctx.state;
     const inner = sign(s, {
         kind: KIND.COMMUNITY_OP,
-        tags: [['h', ctx.ref], ['community', ctx.ref], ...at.heads.map((p) => ['parent', p]), ...(checkpointOp ? [['c', MARK]] : [])],
+        tags: [['h', ctx.ref], ['community', ctx.ref], ...(parents ?? at.validHeads).map((p) => ['parent', p]), ...(checkpointOp ? [['c', MARK]] : [])],
         content: JSON.stringify(body),
-        created_at: Math.max(Math.floor(Date.now() / 1000), (s.lastAt ?? 0) + 1, ...at.heads.map((h) => at.timeOf(h) ?? 0)),
+        created_at: Math.max(Math.floor(Date.now() / 1000), (s.lastAt ?? 0) + 1, at.checkpoint ? at.timeOf(at.checkpoint) : 0),
     });
     const event = ctx.state.encrypted('state') ? await envelope(currentKey(ctx, 'state'), inner, { mark: checkpointOp }) : inner;
     await publish(s.pool, ctx.relays, event);
@@ -417,35 +459,50 @@ function rememberOp(ctx, id, body) {
 
 // Does again, on the current heads, this session's ops that the latest
 // checkpoint dropped: they reached its approvers too late, so it neither
-// covers them nor do they build on it. Ops no longer allowed are let go.
+// covers them nor do they build on it. Key ops are not repeated (an old key
+// may have reached someone removed since): a dropped rekey is healed with a
+// new key, a dropped channel is made anew. Ops no longer allowed are let go.
+// Waits until the covered index is complete, since only it tells covered ops
+// from dropped ones.
 async function redoDropped(ctx) {
     const mine = ctx.s.myOps?.get(ctx.ref) ?? [];
     const lost = mine.filter((o) => !ctx.state.inOrder(o.id));
     if (!lost.length || !ctx.base) return 0;
     await ensureCovered(ctx);
+    if (!ctx.base.covered.complete) return 0;
     const dropped = lost.filter((o) => !ctx.base.covered.has(o.id));
     ctx.s.myOps.set(ctx.ref, mine.filter((o) => !lost.includes(o)));
     let redone = 0;
-    for (const o of dropped) {
+    for (const { body } of dropped) {
         try {
-            await publishOp(ctx, o.body);
+            if (body.type === 'rekey') continue;   // heal() below
+            if (body.type === 'channel-create' && body.keyId) {
+                await createChannel(ctx, { name: body.name, visibility: body.visibility, history: body.history, members: Array.isArray(body.members) ? body.members : [] });
+            } else {
+                await publishOp(ctx, body);
+            }
             redone++;
         } catch (e) {
-            console.warn(`a ${o.body.type} that a checkpoint dropped is no longer allowed:`, e.message);
+            console.warn(`a ${body.type} that a checkpoint dropped is no longer allowed:`, e.message);
         }
+    }
+    if (dropped.some((o) => o.body.type === 'rekey')) {
+        await heal(ctx);
+        redone++;
     }
     return redone;
 }
 
-// Sends keys ([{scope, key}]) to each recipient, as a gift wrap on the community's
-// relays and the recipient's own.
-// Sends keys ([{scope, key}]) to each recipient. A bundle without keys still
-// tells a new member about the community (open communities have no keys). A
-// failed delivery to one recipient does not stop the others; their client gets
-// the keys from the next rekey, or repair copies the bundle later.
+// Sends keys ([{scope, key}]) to each recipient, as a gift wrap on the
+// community's relays and the recipient's own, with the latest checkpoint the
+// sender accepted. A bundle without keys still tells a new member about the
+// community (open communities have no keys). A failed delivery to one
+// recipient does not stop the others; their client gets the keys from the
+// next rekey, or repair copies the bundle later.
 async function deliver(ctx, recipients, keys, { always = false } = {}) {
     if (!keys.length && !always) return;
-    const rumor = { kind: KIND.KEY_BUNDLE, content: JSON.stringify({ ref: ctx.ref, relays: ctx.relays, keys }) };
+    const checkpoint = ctx.chain?.at(-1)?.id ?? null;
+    const rumor = { kind: KIND.KEY_BUNDLE, content: JSON.stringify({ ref: ctx.ref, relays: ctx.relays, keys, checkpoint }) };
     for (const pk of recipients) {
         try {
             const to = union(ctx.relays, await relaysOf(ctx.s, pk));
@@ -480,15 +537,21 @@ export async function heal(ctx) {
 const ownersOf = (state) => state.members().filter((pk) => state.rank(pk) === ROLE.owner).sort();
 
 // Publishes text in parts (sealed under the state key in private communities);
-// resolves with their event ids.
+// resolves with their event ids. A part never ends inside a surrogate pair
+// (relays would store a lone half as U+FFFD, and the part's id would no
+// longer match).
 async function publishParts(ctx, text) {
     const ids = [];
-    for (let i = 0; i === 0 || i < text.length; i += PART) {
-        const inner = sign(ctx.s, { kind: KIND.SNAPSHOT_PART, tags: [['h', ctx.ref], ['community', ctx.ref]], content: text.slice(i, i + PART) });
+    let i = 0;
+    do {
+        let end = Math.min(i + PART, text.length);
+        if (end < text.length && /[\uD800-\uDBFF]/.test(text[end - 1])) end--;
+        const inner = sign(ctx.s, { kind: KIND.SNAPSHOT_PART, tags: [['h', ctx.ref], ['community', ctx.ref]], content: text.slice(i, end) });
         const event = ctx.state.encrypted('state') ? await envelope(currentKey(ctx, 'state'), inner) : inner;
         await publish(ctx.s.pool, ctx.relays, event);
         ids.push(event.id);
-    }
+        i = end;
+    } while (i < text.length);
     return ids;
 }
 
@@ -498,31 +561,27 @@ const nextOffset = (ctx) => {
     return prev ? bodyOf(prev).offset + bodyOf(prev).count : 0;
 };
 
-// Proposes a checkpoint on the current state: its snapshot and covered index
-// in parts, then the checkpoint op on the state's heads.
+// Proposes a checkpoint on the valid heads: the snapshot and covered index of
+// the state they were written on, in parts, then the checkpoint op on them.
 async function proposeCheckpoint(ctx) {
-    const { state } = ctx;
+    const tips = ctx.state.validHeads;
+    const at = resolve(ctx.ref, [...ctx.ops.values()], { base: ctx.base, on: tips });
     const offset = nextOffset(ctx);
-    const text = JSON.stringify(snapshotOf(state));
-    const index = JSON.stringify(epochIndex(state, offset));
+    const text = JSON.stringify(snapshotOf(at));
+    const index = JSON.stringify(epochIndex(at, offset));
     return publishOp(ctx, {
         type: 'checkpoint', prev: ctx.chain.at(-1)?.id ?? null,
         hash: await sha256Hex(utf8(text)), indexHash: await sha256Hex(utf8(index)),
         state: await publishParts(ctx, text), index: await publishParts(ctx, index),
-        owners: ownersOf(state), offset, count: state.order.length,
-    }, { on: state });
+        owners: ownersOf(at), offset, count: at.order.length,
+    }, { parents: tips });
 }
 
-// Whether proposal p says what the log says (the state it was written on, its
-// covered index and owners, and parts that hold them), and leaves out no valid
-// op this client knows: once accepted, ops that do not build on it are
-// ignored, so it waits for a proposal that covers them.
+// Whether proposal p says what the log says: the state it was written on, its
+// covered index and owners, and parts that hold them. (Ops it leaves out are
+// dropped once it is accepted; their authors' clients redo them.)
 async function verifyCheckpoint(ctx, p) {
     const body = bodyOf(p);
-    const { state } = ctx;
-    const dropped = state.order.slice(1).some((o) => state.valid.has(o.id) && !isCheckpointOp(o.body)
-        && o.id !== p.id && !state.isAncestor(o.id, p.id) && !state.isAncestor(p.id, o.id));
-    if (dropped) return false;
     const at = resolve(ctx.ref, [...ctx.ops.values()], { base: ctx.base, upTo: p.id });
     if (!at || body.offset !== nextOffset(ctx) || body.count !== at.order.length || body.owners.join() !== ownersOf(at).join()) return false;
     const text = JSON.stringify(snapshotOf(at));
@@ -543,18 +602,22 @@ async function verified(ctx, p) {
     return ok;
 }
 
-// What a client does on its own while a community is open. Any client redoes
-// its own ops that a checkpoint dropped (redoDropped). An owner's may
-// vote (it is an owner of the latest checkpoint, or the founder before the
-// first): then it backs the earliest proposal it can verify, unless it backs
-// that one already; backing a later one only when its earlier choice no
-// longer verifies (it would drop an op) keeps two from both winning among
-// honest owners. And an owner proposes one when none verifies, every `every`
-// ops or when the owners changed. Resolves with 'redone', 'approved',
+// What a client does on its own while a community is open. Any client
+// records its latest accepted checkpoint in the user's list and redoes its
+// own ops that a checkpoint dropped (redoDropped). At a fork in the
+// checkpoints (see acceptedChain) nothing more. Otherwise, a client that may
+// vote (an owner of the latest checkpoint, or the founder before the first)
+// backs the earliest proposal it can verify, unless it backs another that
+// still verifies: one proposal per checkpoint, so among honest owners two
+// cannot both win. And an owner proposes one when none verifies: every
+// `every` valid ops, or when the owners changed. Before either, a state key a
+// departed member holds is replaced. Resolves with 'redone', 'approved',
 // 'proposed' or null.
 export async function maintain(ctx, { every = CHECKPOINT_EVERY } = {}) {
     await reload(ctx);
+    await rememberTip(ctx);
     if (await redoDropped(ctx)) return 'redone';
+    if (ctx.conflict) return null;
     const { s, state } = ctx;
     const cur = ctx.chain.at(-1) ?? null;
     const voters = cur ? bodyOf(cur).owners : [ctx.ref.split(':')[0]];
@@ -567,16 +630,26 @@ export async function maintain(ctx, { every = CHECKPOINT_EVERY } = {}) {
     for (const p of pending) {
         if (await verified(ctx, p)) { good = p; break; }
     }
+    const healFirst = async () => {
+        if (state.encrypted('state') && state.needsRekey('state') && state.isMember(s.pk)) await heal(ctx);
+    };
     if (good && voters.includes(s.pk)) {
-        const backed = ctx.marked.some((e) => e.pubkey === s.pk && (e.id === good.id || bodyOf(e)?.checkpoint === good.id));
-        if (!backed) {
+        const backs = (p) => ctx.marked.some((e) => e.pubkey === s.pk && (e.id === p.id || bodyOf(e)?.checkpoint === p.id));
+        let backsAnother = false;
+        for (const p of pending) {
+            if (p !== good && backs(p) && (await verified(ctx, p))) backsAnother = true;
+        }
+        if (!backs(good) && !backsAnother) {
+            await healFirst();
             await publishOp(ctx, { type: 'approve-checkpoint', checkpoint: good.id });
             return 'approved';
         }
     }
-    if (!good && state.rank(s.pk) === ROLE.owner && state.order.length > 1) {
+    if (!good && state.rank(s.pk) === ROLE.owner) {
+        const since = state.order.slice(1).filter((o) => state.valid.has(o.id) && !isCheckpointOp(o.body)).length;
         const ownersChanged = ownersOf(state).join() !== [...voters].sort().join();
-        if (state.order.length - 1 >= every || ownersChanged || pending.length) {
+        if (since > 0 && (since >= every || ownersChanged || pending.length)) {
+            await healFirst();
             await proposeCheckpoint(ctx);
             return 'proposed';
         }
@@ -727,7 +800,8 @@ async function rawMessages(ctx, channel) {
     const src = await sourceOf(ctx, channel);
     const events = await synced(ctx.s, ctx.relays, src.base, src.field, src.values, { paged: true });
     const signed = src.keys ? await openAll(ctx.s, events, src.keys, KIND.COMMUNITY_MESSAGE) : events;
-    return signed.filter(inChannel(ctx, channel)).map(toMessage);
+    // one message in two envelopes (anyone with the key can rewrap it) counts once
+    return [...new Map(signed.filter(inChannel(ctx, channel)).map((e) => [e.id, e])).values()].map(toMessage);
 }
 
 // Fetches a channel's next page of older messages; resolves with whether
@@ -745,24 +819,23 @@ export async function hasOlder(ctx, channel) {
 }
 
 // pk's newest messages in a channel (about `limit`), asked for directly: by
-// sender tag in encrypted channels, by author in plaintext ones.
+// sender tag in encrypted channels, by author in plaintext ones; page by page
+// while a page holds none of theirs in this channel (their messages in other
+// channels, or junk under their tag from someone holding an old key).
 async function newestBy(ctx, channel, pk, limit) {
     const src = await sourceOf(ctx, channel);
+    if (src.keys && !src.keys.length) return [];
     const theirs = (e) => e.pubkey === pk && inChannel(ctx, channel)(e);
-    if (src.keys) {
-        if (!src.keys.length) return [];
-        const tags = await Promise.all(src.keys.map((k) => senderTag(k.key, pk)));
-        const envs = await query(ctx.s.pool, ctx.relays, { ...ENVELOPES, '#s': tags, limit });
-        return (await openAll(ctx.s, envs, src.keys, KIND.COMMUNITY_MESSAGE)).filter(theirs).map(toMessage);
-    }
-    // plaintext: their newest messages in the whole community, page by page
-    // until some are in this channel
+    const filter = src.keys
+        ? { ...ENVELOPES, '#s': await Promise.all(src.keys.map((k) => senderTag(k.key, pk))) }
+        : { ...plainMessages(ctx.ref), authors: [pk] };
     let until;
     for (let i = 0; i < 20; i++) {
-        const page = await query(ctx.s.pool, ctx.relays, { ...plainMessages(ctx.ref), authors: [pk], until, limit });
-        const found = page.filter(theirs);
+        const page = await query(ctx.s.pool, ctx.relays, { ...filter, until, limit });
+        const found = (src.keys ? await openAll(ctx.s, page, src.keys, KIND.COMMUNITY_MESSAGE) : page).filter(theirs);
         if (found.length || page.length < limit) return found.map(toMessage);
-        until = page.at(-1).created_at;   // newest first, so the last is the oldest
+        const oldest = page.at(-1).created_at;   // newest first
+        until = oldest === until ? oldest - 1 : oldest;
     }
     return [];
 }
@@ -780,6 +853,11 @@ async function chainHeads(ctx, channel, pk, { limit = PAGE } = {}) {
     return [...mine.values()].filter((m) => !referenced.has(m.id)).map((m) => m.id);
 }
 
+// What a message names as the ops its sender saw: the valid heads, and the
+// latest checkpoint (if a checkpoint later drops those heads, the message
+// still names an op every member knows).
+const stateTags = (state) => [...new Set([...state.validHeads, ...(state.checkpoint ? [state.checkpoint] : [])])];
+
 export async function sendMessage(ctx, channel, topic, text) {
     const scope = `ch:${channel}`;
     await reload(ctx);
@@ -791,7 +869,7 @@ export async function sendMessage(ctx, channel, topic, text) {
         // created_at only has seconds; ms orders messages sent within the same second
         // `state` names the op log's heads the sender saw, which proves they had joined
         tags: [['h', ctx.ref], ['community', ctx.ref], ['channel', channel], ['topic', topic], ['ms', String(Date.now())],
-            ...prev.map((p) => ['prev', p]), ...ctx.state.heads.map((h) => ['state', h])],
+            ...prev.map((p) => ['prev', p]), ...stateTags(ctx.state).map((h) => ['state', h])],
     });
     const event = ctx.state.encrypted(scope) ? await envelope(currentKey(ctx, scope), inner, { sender: ctx.s.pk }) : inner;
     await publish(ctx.s.pool, ctx.relays, event);

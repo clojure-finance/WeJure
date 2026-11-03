@@ -223,10 +223,57 @@ describe('community rules', () => {
             const rival = op(m, body(c1.id, [m.pk], { hash: H2 }), [c1]);              // a stranger and his friend
             const friend = op(m, { type: 'approve-checkpoint', checkpoint: rival.id }, [rival]);
             const c3 = op(f, body(c2.id, [f.pk]), [ok]);                                // f is not among c2's owners
-            assert.deepEqual(acceptedChain(ref, [genesis, c1, c2, ok, rival, friend, c3]).map((e) => e.id), [c1.id, c2.id]);
-            assert.deepEqual(acceptedChain(ref, [genesis, c1, c2, rival, friend, c3]).map((e) => e.id), [c1.id], 'without b, a alone is 1 of 3');
+            const ids = (events, opts) => acceptedChain(ref, events, opts).chain.map((e) => e.id);
+            assert.deepEqual(ids([genesis, c1, c2, ok, rival, friend, c3]), [c1.id, c2.id]);
+            assert.deepEqual(ids([genesis, c1, c2, rival, friend, c3]), [c1.id], 'without b, a alone is 1 of 3');
             const c3ok = op(a, { type: 'approve-checkpoint', checkpoint: c3.id }, [c3]);
-            assert.deepEqual(acceptedChain(ref, [c1, c2, ok, c3, c3ok]).map((e) => e.id), [c1.id, c2.id, c3.id]);
+            assert.deepEqual(ids([c1, c2, ok, c3, c3ok]), [c1.id, c2.id, c3.id]);
+        });
+
+        test('a former majority cannot rewrite the chain with a backdated rival: devices keep theirs, or stop at the fork', () => {
+            const { f, ref, op, genesis } = community();
+            const [b, c] = [person(), person()];
+            const body = (prev, owners) => ({ type: 'checkpoint', prev, hash: H, indexHash: H, state: [H], index: [H], owners, offset: 0, count: 1 });
+            const c1 = op(f, body(null, [f.pk, b.pk, c.pk]), [genesis]);
+            const c2 = op(b, body(c1.id, [b.pk, c.pk]), [c1]);              // the founder has been voted out since
+            const ok = op(c, { type: 'approve-checkpoint', checkpoint: c2.id }, [c2]);
+            // later, the founder alone signs a first checkpoint naming only himself, dated at the genesis
+            const forged = op(f, body(null, [f.pk]), [genesis], genesis.created_at);
+            const all = [genesis, c1, c2, ok, forged];
+            const ids = (opts) => acceptedChain(ref, all, opts);
+            assert.deepEqual(ids({ anchor: c2.id }).chain.map((e) => e.id), [c1.id, c2.id], 'a device that had accepted c2 keeps it');
+            assert.deepEqual(ids({ anchor: c1.id }).chain.map((e) => e.id), [c1.id, c2.id], 'and follows on from an older one');
+            const fresh = ids();
+            assert.deepEqual(fresh.chain, [], 'a device with no anchor follows neither');
+            assert.equal(fresh.conflict, true);
+            assert.deepEqual(ids({ anchor: forged.id }).chain.map((e) => e.id), [forged.id], 'a forged anchor is a line of its own');
+        });
+
+        test('new ops build on valid ops only, so junk from strangers cannot bloat or date them', () => {
+            const { f, ref, op, genesis } = community();
+            const stranger = person();
+            const x = op(f, { type: 'settings', name: 'x' }, [genesis]);
+            const junk = Array.from({ length: 5 }, (_, i) => op(stranger, { type: 'hide', message: `j${i}` }, [x], 4_000_000_000));
+            const s = resolve(ref, [genesis, x, ...junk]);
+            assert.equal(s.heads.length, 5);
+            assert.deepEqual(s.validHeads, [x.id]);
+        });
+
+        test('switching a channel\'s history after a checkpoint needs the same new keys as with the whole history', () => {
+            for (const [from, to] of [['shared', 'from-join'], ['from-join', 'shared']]) {
+                const { f, ref, op, genesis } = community('private');
+                const a = person();
+                const ops = [genesis];
+                ops.push(op(f, { type: 'channel-create', channel: 'g', name: 'general', history: from, keyId: 'kg' }, [ops.at(-1)]));
+                ops.push(op(f, { type: 'add', member: a.pk }, [ops.at(-1)]));   // an addition to ch:g
+                const before = resolve(ref, ops);
+                const cp = checkpointOn(op, f, before, ops);
+                const update = op(f, { type: 'channel-update', channel: 'g', history: to }, [cp]);
+                const full = resolve(ref, [...ops, cp, update]);
+                const fromCheckpoint = resolve(ref, [cp, update], { base: { checkpoint: cp, state: JSON.parse(JSON.stringify(snapshotOf(before))) } });
+                assert.equal(fromCheckpoint.needsRekey('ch:g'), full.needsRekey('ch:g'), `${from} to ${to}`);
+                assert.deepEqual(snapshotOf(fromCheckpoint), snapshotOf(full));
+            }
         });
 
         test('after a checkpoint, ops that do not build on it, or are dated before it, are ignored', () => {

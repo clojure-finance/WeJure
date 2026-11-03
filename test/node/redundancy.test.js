@@ -99,9 +99,13 @@ describe('redundancy across relays', () => {
         assert.ok(texts(posts).includes('signed by alice'));
 
         const reader = track({ ...bob, pool: createPool(), relays: [evil.url, r2.url] });
-        const seen = await query(reader.pool, reader.relays, { kinds: [KIND.POST], authors: [alice.pk] });
-        assert.ok(seen.length > 0);
-        assert.ok(seen.every((e) => !e.content.startsWith('FORGED')));
+        // the liar sends its forged copy under the real id, usually first: the
+        // real one from r2 must still come through
+        for (let i = 0; i < 5; i++) {
+            const seen = await query(reader.pool, reader.relays, { kinds: [KIND.POST], authors: [alice.pk] });
+            assert.ok(texts(seen).includes('signed by alice'));
+            assert.ok(seen.every((e) => !e.content.startsWith('FORGED')));
+        }
 
         const onlyLiar = await query(reader.pool, [evil.url], { kinds: [KIND.POST], authors: [alice.pk] });
         assert.deepEqual(onlyLiar, [], 'every forged event was dropped');

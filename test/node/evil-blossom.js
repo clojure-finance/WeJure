@@ -1,5 +1,5 @@
 // A malicious Blossom server for tests: it serves the same fake bytes for any hash.
-// Usage: node servers/evil-blossom.js <port>
+// Usage: node test/node/evil-blossom.js <port>
 import http from 'node:http';
 
 const [port] = process.argv.slice(2);

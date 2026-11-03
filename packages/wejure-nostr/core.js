@@ -115,11 +115,13 @@ export async function publish(pool, relays, event, { minAcks = 1, maxWait = 3000
 
 // Asks every relay, merges, drops duplicates and anything malformed or badly
 // signed, newest first. A `limit` applies per relay and chunk, so callers that
-// want the newest n take the first n of the result.
+// want the newest n take the first n of the result. Each relay is asked on
+// its own: the pool drops an id it has seen before checking the event, so a
+// relay that sends a forged copy first would otherwise hide the real one.
 export async function query(pool, relays, filter, { maxWait = 3000 } = {}) {
     relays = relayUrls(relays);
     if (!relays.length) return [];
-    const batches = await Promise.all(chunked(filter).map((f) => pool.querySync(relays, f, { maxWait })));
+    const batches = await Promise.all(chunked(filter).flatMap((f) => relays.map((url) => pool.querySync([url], f, { maxWait }))));
     const byId = new Map();
     for (const e of batches.flat()) if (checkEvent(e)) byId.set(e.id, e);
     return [...byId.values()].sort((a, b) => b.created_at - a.created_at || (a.id < b.id ? -1 : 1));   // as relays order

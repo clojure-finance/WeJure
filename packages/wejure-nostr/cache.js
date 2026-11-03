@@ -9,10 +9,11 @@
 //
 // The same database keeps the mirrors' copies of relay data (sync.js), so a
 // page load fetches only what is new. Each mirror bucket is stored as batches
-// of events plus its marks, all encrypted; its name (which filter, which
-// value) only as an HMAC, so the database does not show what the user follows.
+// of events plus its marks, all encrypted. Keys are HMACs (of event ids, of
+// bucket names: which filter, which value), so the database does not show
+// what the user reads or follows.
 
-const DB_VERSION = 2;
+const DB_VERSION = 3;   // 3: decrypted entries keyed by HMAC
 const STORE = 'decrypted';
 const MIRRORED = 'mirrored';   // "<bucket>": marks; "<bucket>:<batch>": events
 const COMPACT_AT = 20;         // batches; more are merged into one when read
@@ -27,18 +28,34 @@ function request(req) {
     });
 }
 
+// The account's database, or null to work in memory only: no IndexedDB
+// (private mode, blocked storage), or not open within 3 s (another tab holds
+// an older version open). Logging out in another tab deletes the database,
+// which waits until every tab has closed it: this one then closes it at once
+// (db.gone) and goes on in memory.
 async function openDb(pk) {
     if (!globalThis.indexedDB) return null;
     try {
         const req = indexedDB.open(dbName(pk), DB_VERSION);
-        req.onupgradeneeded = () => {
+        req.onupgradeneeded = (e) => {
+            const db = req.result;
+            if (e.oldVersion < 3 && db.objectStoreNames.contains(STORE)) db.deleteObjectStore(STORE);
             for (const name of [STORE, MIRRORED]) {
-                if (!req.result.objectStoreNames.contains(name)) req.result.createObjectStore(name);
+                if (!db.objectStoreNames.contains(name)) db.createObjectStore(name);
             }
         };
-        return await request(req);
+        const db = await new Promise((resolve) => {
+            const timer = setTimeout(() => {
+                req.onsuccess = () => req.result.close();   // opened too late: let it go
+                resolve(null);
+            }, 3000);
+            req.onsuccess = () => { clearTimeout(timer); resolve(req.result); };
+            req.onerror = () => { clearTimeout(timer); resolve(null); };
+        });
+        if (db) db.onversionchange = () => { db.gone = true; db.close(); };
+        return db;
     } catch {
-        return null;   // private mode or blocked storage: memory only
+        return null;
     }
 }
 
@@ -76,19 +93,19 @@ function createCache(s) {
     const memory = new Map();
     const persistent = (async () => {
         const db = await openDb(s.pk);
-        if (!db) return null;
-        const p = { db, closed: false, ...(await deriveKeys(s.sk)) };
-        // Logging out in another tab deletes the database, which waits until
-        // every tab has closed it: this one closes it and goes on in memory.
-        db.onversionchange = () => { p.closed = true; db.close(); };
-        return p;
+        return db && { db, closed: false, ...(await deriveKeys(s.sk)) };
     })();
     // The database, or null to work in memory only (none, or closed). A
     // database closed under a request makes it throw; callers then carry on
     // without it.
     const usable = async () => {
         const p = await persistent;
-        return p && !p.closed ? p : null;
+        return p && !p.closed && !p.db.gone ? p : null;
+    };
+    const rowKeys = new Map();   // id -> its key in the store
+    const rowKey = async (p, id) => {
+        if (!rowKeys.has(id)) rowKeys.set(id, hex(await crypto.subtle.sign('HMAC', p.names, utf8(`decrypted:${id}`))));
+        return rowKeys.get(id);
     };
 
     // Map id -> value for those of ids that are cached (value may be null).
@@ -101,10 +118,11 @@ function createCache(s) {
         }
         const p = await usable();
         if (!p || !missing.length) return found;
+        const keys = await Promise.all(missing.map((id) => rowKey(p, id)));   // before the transaction, which would not wait
         let rows;
         try {
             const store = p.db.transaction(STORE, 'readonly').objectStore(STORE);
-            rows = await Promise.all(missing.map((id) => request(store.get(id))));
+            rows = await Promise.all(keys.map((key) => request(store.get(key))));
         } catch {
             return found;
         }
@@ -124,10 +142,10 @@ function createCache(s) {
         for (const [id, value] of entries) memory.set(id, value);
         const p = await usable();
         if (!p || !entries.length) return;
-        const rows = await Promise.all(entries.map(async ([id, value]) => [id, await seal(p.key, value)]));
+        const rows = await Promise.all(entries.map(async ([id, value]) => [await rowKey(p, id), await seal(p.key, value)]));
         try {
             const tx = p.db.transaction(STORE, 'readwrite');
-            for (const [id, row] of rows) tx.objectStore(STORE).put(row, id);
+            for (const [key, row] of rows) tx.objectStore(STORE).put(row, key);
             await done(tx);
         } catch { /* closed meanwhile: memory only */ }
     }
@@ -181,7 +199,7 @@ function createCache(s) {
             tx.objectStore(MIRRORED).put(marksRow, id);
             return await committed(tx);
         } catch {
-            return p.closed;   // closed meanwhile: memory only from now on
+            return p.closed || !!p.db.gone;   // closed meanwhile: memory only from now on
         }
     }
 

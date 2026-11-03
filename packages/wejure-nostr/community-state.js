@@ -121,7 +121,8 @@ function ancestry(ordered) {
 
 function newState(ref, founder) {
     return {
-        rekeyAtBase: new Set(),  // scopes the checkpoint's snapshot said need a new key
+        rekeyAtBase: new Set(),        // scopes the checkpoint's snapshot said need a new key after a removal
+        rekeyOnJoinAtBase: new Set(),  // ... after an addition (counts in from-join channels)
         ref, founder, created: false,
         name: '', description: '', mode: 'private', join: 'invite', relays: [],
         roles: new Map(),        // pubkey -> rank
@@ -382,10 +383,10 @@ function parseAll(ref, events) {
     return byId;
 }
 
-// The ids of upTo's ancestors among byId (not upTo itself).
-function ancestorsOf(byId, upTo) {
+// The ids of tips and their ancestors among byId.
+function ancestorsOf(byId, tips) {
     const out = new Set();
-    const stack = [...(byId.get(upTo)?.parents ?? [])];
+    const stack = [...tips];
     while (stack.length) {
         const id = stack.pop();
         if (out.has(id) || !byId.has(id)) continue;
@@ -398,9 +399,9 @@ function ancestorsOf(byId, upTo) {
 // The ops that descend from root (the latest accepted checkpoint) and are
 // dated no earlier than it, in topological order, root first. Parents outside
 // that set (covered by the checkpoint, ignored, or not known yet) count as
-// placed already, so everyone with the same ops gets the same order. upTo:
-// only that op's ancestors (the state at a checkpoint).
-function postOrder(byId, root, upTo) {
+// placed already, so everyone with the same ops gets the same order. keep:
+// if given, only those ops (the state some heads were written on).
+function postOrder(byId, root, keep) {
     const kids = new Map();
     for (const op of byId.values()) for (const p of op.parents) push(kids, p, op);
     let set = new Set([root.id]);
@@ -412,10 +413,7 @@ function postOrder(byId, root, upTo) {
             queue.push(k);
         }
     }
-    if (upTo) {
-        const keep = ancestorsOf(byId, upTo);
-        set = new Set([...set].filter((id) => id === root.id || keep.has(id)));
-    }
+    if (keep) set = new Set([...set].filter((id) => id === root.id || keep.has(id)));
     const ops = new Map([...set].map((id) => {
         const op = byId.get(id);
         return [id, { ...op, parents: id === root.id ? [] : op.parents.filter((p) => set.has(p)) }];
@@ -426,23 +424,28 @@ function postOrder(byId, root, upTo) {
 // The community's state, or null if its genesis op (or, with base, the
 // checkpoint) is missing. base: the latest accepted checkpoint, as
 // {checkpoint: its event, state: its snapshot, covered: coveredIndex() of
-// the ops before it (filled in later; see joinedBy)}. upTo: an op id, to get
-// the state that op was written on (its ancestors only), for checkpoints.
-export function resolve(ref, events, { base = null, upTo = null } = {}) {
+// the ops before it (filled in later; see joinedBy)}. For checkpoints, the
+// state some heads were written on: on: those op ids; upTo: an op id, whose
+// parents they are.
+export function resolve(ref, events, { base = null, on = null, upTo = null } = {}) {
     const [founder, nonce] = ref.split(':');
     const byId = parseAll(ref, events);
-    let ordered;
     if (base) {
         const root = parseOp(ref, base.checkpoint);
         if (!root || root.body.type !== 'checkpoint' || !base.state) return null;
         byId.set(root.id, root);
-        ordered = postOrder(byId, root, upTo);
+    }
+    const tips = upTo ? byId.get(upTo)?.parents ?? [] : on;
+    const keep = tips && ancestorsOf(byId, tips);
+    let ordered;
+    if (base) {
+        ordered = postOrder(byId, byId.get(base.checkpoint.id), keep);
     } else {
         const genesis = [...byId.values()]
             .filter((o) => o.body.type === 'create' && o.pubkey === founder && o.body.nonce === nonce && o.parents.length === 0)
             .sort(cmp)[0];
         if (!genesis) return null;
-        const scope = upTo ? new Map([...ancestorsOf(byId, upTo)].map((id) => [id, byId.get(id)])) : byId;
+        const scope = keep ? new Map([...keep].map((id) => [id, byId.get(id)])) : byId;
         if (!scope.has(genesis.id)) return null;
         ordered = topoOrder(scope, genesis);
     }
@@ -467,9 +470,18 @@ export function resolve(ref, events, { base = null, upTo = null } = {}) {
     const { S, valid } = result;
     const hasChild = new Set(ordered.flatMap((o) => o.parents));
     const times = new Map(ordered.map((o) => [o.id, o.created_at]));
+    // What new ops and messages build on: the valid ops no valid op descends
+    // from, the latest 20 at most. Invalid ops (anyone can publish some in an
+    // open community) are not built on, so they cannot bloat or date honest ops.
+    const leadsToValid = new Set();
+    for (let i = ordered.length - 1; i >= 0; i--) {
+        const op = ordered[i];
+        if (valid.has(op.id) || leadsToValid.has(op.id)) op.parents.forEach((p) => leadsToValid.add(p));
+    }
     return withHelpers(S, {
         order: ordered, isAncestor: dag.isAncestor, inOrder: dag.has, cutAt: dag.cutAt, valid,
         heads: ordered.filter((o) => !hasChild.has(o.id)).map((o) => o.id),
+        validHeads: ordered.filter((o) => valid.has(o.id) && !leadsToValid.has(o.id)).map((o) => o.id).slice(-20),
         checkpoint: base ? ordered[0].id : null,
         covered: base?.covered ?? null,
         timeOf: (id) => times.get(id),
@@ -488,18 +500,24 @@ function withHelpers(S, extra) {
     const members = () => [...S.roles.keys()];
     const scopeMembers = (scope) => (scope === 'state' ? members() : members().filter((pk) => inChannel(scope.slice(3), pk)));
     const currentKeyId = (scope) => S.keyOps.get(scope)?.at(-1)?.keyId ?? null;
+    // Whether some op of `kind` (reductions: took someone out of the scope;
+    // additions: brought someone in) is not covered by the scope's latest key
+    // op. A key op from before the checkpoint: what the snapshot said, or any
+    // such op since.
+    const uncovered = (scope, kind) => {
+        const k = S.keyOps.get(scope)?.at(-1);
+        if (!k) return false;
+        const since = S[kind].get(scope) ?? [];
+        if (!extra.inOrder(k.id)) return (kind === 'reductions' ? S.rekeyAtBase : S.rekeyOnJoinAtBase).has(scope) || since.length > 0;
+        return since.some((d) => d !== k.id && !extra.isAncestor(d, k.id));
+    };
     // A scope needs a new key unless its latest key op descends from every op that
     // took someone out of it (and, for from-join channels, brought someone in).
     const needsRekey = (scope) => {
         if (!encrypted(scope)) return false;
-        const k = S.keyOps.get(scope)?.at(-1);
-        if (!k) return true;
-        const ch = scope === 'state' ? null : channel(scope.slice(3));
-        const triggers = [...(S.reductions.get(scope) ?? []), ...(ch?.history === 'from-join' ? S.additions.get(scope) ?? [] : [])];
-        // a key op from before the checkpoint: what the snapshot said, unless
-        // something since took someone out (or, from-join, brought someone in)
-        if (!extra.inOrder(k.id)) return S.rekeyAtBase.has(scope) || triggers.length > 0;
-        return triggers.some((d) => d !== k.id && !extra.isAncestor(d, k.id));
+        if (!S.keyOps.get(scope)?.length) return true;
+        const fromJoin = scope !== 'state' && channel(scope.slice(3))?.history === 'from-join';
+        return uncovered(scope, 'reductions') || (fromJoin && uncovered(scope, 'additions'));
     };
     const everIn = (id, pk) => {
         const ch = channel(id);
@@ -524,34 +542,38 @@ function withHelpers(S, extra) {
         return by(`${pk}|state`) && (channel(id)?.visibility !== 'private' || by(`${pk}|ch:${id}`));
     };
     const roleOf = (pk) => Object.keys(ROLE).find((k) => ROLE[k] === rank(pk));
-    return Object.assign(S, extra, { rank, roleOf, isMember, channel, inChannel, everIn, joinedBy, encrypted, members, scopeMembers, currentKeyId, needsRekey });
+    return Object.assign(S, extra, { rank, roleOf, isMember, channel, inChannel, everIn, joinedBy, encrypted, members, scopeMembers, currentKeyId, uncovered, needsRekey });
 }
 
 // ---- checkpoints ----
 
-const sorted = (xs) => [...xs].sort();
-const byKey = (m, f = (v) => v) => [...m].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([k, v]) => [k, f(v)]);
+const list = (xs) => [...xs];
+const entries = (m, f = (v) => v) => [...m].map(([k, v]) => [k, f(v)]);
 
-// The snapshot of a state, as plain JSON in a fixed order, so that everyone
-// who computes it gets the same text (and hash). What took someone out of a
-// scope is summed up as which scopes need a new key; finished proposals are
+// The snapshot of a state, as plain JSON in a fixed order (the order the
+// replay created things in, which is the same for everyone), so that
+// everyone who computes it gets the same text and hash, and a device that
+// starts from it lists channels and proposals as one that replayed
+// everything. What took someone out of a scope, or brought someone in, is
+// summed up as which scopes need a new key for it; finished proposals are
 // left out.
 export function snapshotOf(state) {
     const scopes = ['state', ...[...state.channels.keys()].map((id) => `ch:${id}`)];
     return {
         v: 1,
         name: state.name, description: state.description, mode: state.mode, join: state.join, relays: state.relays,
-        roles: byKey(state.roles), ever: sorted(state.ever), banned: sorted(state.banned),
-        channels: byKey(state.channels, (c) => ({
-            name: c.name, visibility: c.visibility, history: c.history, archived: c.archived, members: sorted(c.members), ever: sorted(c.ever),
+        roles: entries(state.roles), ever: list(state.ever), banned: list(state.banned),
+        channels: entries(state.channels, (c) => ({
+            name: c.name, visibility: c.visibility, history: c.history, archived: c.archived, members: list(c.members), ever: list(c.ever),
         })),
-        keyOps: byKey(state.keyOps),
-        rekey: scopes.filter((scope) => state.needsRekey(scope)).sort(),
-        departed: byKey(state.departed, sorted),
-        hidden: sorted(state.hidden),
-        retracted: byKey(state.retracted, sorted),
-        proposals: byKey(new Map([...state.proposals].filter(([, p]) => !p.done)), (p) => ({ action: p.action, approvals: sorted(p.approvals) })),
-        addedBy: byKey(state.addedBy),
+        keyOps: entries(state.keyOps),
+        rekey: scopes.filter((scope) => state.uncovered(scope, 'reductions')),
+        rekeyOnJoin: scopes.filter((scope) => state.uncovered(scope, 'additions')),
+        departed: entries(state.departed, list),
+        hidden: list(state.hidden),
+        retracted: entries(state.retracted, list),
+        proposals: entries(new Map([...state.proposals].filter(([, p]) => !p.done)), (p) => ({ action: p.action, approvals: list(p.approvals) })),
+        addedBy: entries(state.addedBy),
     };
 }
 
@@ -569,6 +591,7 @@ function fromSnapshot(ref, founder, snap) {
         }])),
         keyOps: new Map(snap.keyOps.map(([scope, ks]) => [scope, ks.map((k) => ({ id: k.id, keyId: k.keyId }))])),
         rekeyAtBase: new Set(snap.rekey),
+        rekeyOnJoinAtBase: new Set(snap.rekeyOnJoin),
         departed: new Map(snap.departed.map(([k, heads]) => [k, new Set(heads)])),
         hidden: new Set(snap.hidden),
         retracted: new Map(snap.retracted.map(([id, pks]) => [id, new Set(pks)])),
@@ -638,32 +661,50 @@ function checkpointBody(b) {
 }
 
 // The accepted checkpoints, oldest first, as their events, from any events
-// that include the checkpoint and approve-checkpoint ops. A checkpoint counts once more than
-// half of the owners named by the one before it (by the genesis: the founder)
-// have proposed or approved it; that owner list is the checkpoint's own. Of
-// several accepted ones with the same predecessor the earliest (created_at,
-// id) counts, which only an owner who approves two can bring about.
-export function acceptedChain(ref, events) {
+// that include the checkpoint and approve-checkpoint ops: {chain, conflict}.
+// A checkpoint counts once more than half of the owners named by the one
+// before it (by the genesis: the founder) have proposed or approved it; that
+// owner list is the checkpoint's own.
+//
+// Owners who once had that majority keep their keys, so they could later sign
+// a rival successor, backdated (the founder alone, before the first). Dates
+// cannot settle that, so a device follows the checkpoint it accepted before
+// (anchor: from this device, the user's community list, or the invitation)
+// and, from there or without one, follows a checkpoint only while it has a
+// single accepted successor. At a fork it stops (conflict: true): it then
+// replays the ops since the last checkpoint before it, slower but not misled.
+export function acceptedChain(ref, events, { anchor = null } = {}) {
     const [founder] = ref.split(':');
     const byId = parseAll(ref, events);
-    const proposals = [...byId.values()].filter((o) => checkpointBody(o.body));
-    const approvers = new Map(proposals.map((p) => [p.id, new Set([p.pubkey])]));
+    const proposals = new Map([...byId.values()].filter((o) => checkpointBody(o.body)).map((o) => [o.id, o]));
+    const approvers = new Map([...proposals.values()].map((p) => [p.id, new Set([p.pubkey])]));
     for (const o of byId.values()) {
         if (o.body.type === 'approve-checkpoint' && approvers.has(o.body.checkpoint)) approvers.get(o.body.checkpoint).add(o.pubkey);
     }
-    const chain = [];
-    let prev = null;
-    let owners = [founder];
-    while (chain.length < proposals.length) {
+    const accepted = (p, owners) => {
         const voters = new Set(owners);
-        const next = proposals
-            .filter((p) => p.body.prev === prev && [...approvers.get(p.id)].filter((pk) => voters.has(pk)).length * 2 > voters.size)
-            .sort(cmp)[0];
-        if (!next) break;
-        chain.push(next);
-        prev = next.id;
-        owners = next.body.owners;
+        return [...approvers.get(p.id)].filter((pk) => voters.has(pk)).length * 2 > voters.size;
+    };
+    // the anchor's line back to the genesis, if every step of it was accepted
+    let chain = [];
+    for (let p = proposals.get(anchor); p && chain.length <= proposals.size; p = proposals.get(p.body.prev)) chain.unshift(p);
+    let owners = [founder];
+    for (let i = 0; i < chain.length; i++) {
+        if (chain[i].body.prev !== (chain[i - 1]?.id ?? null) || !accepted(chain[i], owners)) { chain = []; break; }
+        owners = chain[i].body.owners;
+    }
+    owners = chain.at(-1)?.body.owners ?? [founder];
+    let conflict = false;
+    while (chain.length < proposals.size) {
+        const prev = chain.at(-1)?.id ?? null;
+        const next = [...proposals.values()].filter((p) => p.body.prev === prev && accepted(p, owners));
+        if (next.length !== 1) {
+            conflict = next.length > 1;
+            break;
+        }
+        chain.push(next[0]);
+        owners = next[0].body.owners;
     }
     const eventOf = new Map(events.map((e) => [e.id, e]));
-    return chain.map((c) => eventOf.get(c.id));
+    return { chain: chain.map((c) => eventOf.get(c.id)), conflict };
 }

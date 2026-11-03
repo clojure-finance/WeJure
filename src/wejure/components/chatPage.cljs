@@ -70,8 +70,10 @@
                                   (.then (app/conversation (:pk p))
                                          (fn [ms]
                                            (when (= p @peer)               ;; still the open conversation
-                                             (reset! messages (js->clj ms :keywordize-keys true))
-                                             (scroll-to-bottom))))))
+                                             (let [ms (js->clj ms :keywordize-keys true)
+                                                   grew? (not= (:id (last ms)) (:id (last @messages)))]
+                                               (reset! messages ms)
+                                               (when grew? (scroll-to-bottom))))))))
                close-chat! (fn []
                              (reset! peer nil)
                              (reset! messages []))

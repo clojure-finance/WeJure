@@ -60,12 +60,21 @@ export function createBlossom(dir, publicUrl) {
     fs.mkdirSync(dir, { recursive: true });
     const file = (sha256) => path.join(dir, sha256);
     const meta = (sha256) => path.join(dir, `${sha256}.json`);
+    // Written under a temporary name, then renamed, so a crash never leaves a
+    // half-written file behind.
+    const writeWhole = (target, data) => {
+        const tmp = `${target}.${crypto.randomBytes(6).toString('hex')}.tmp`;
+        fs.writeFileSync(tmp, data);
+        fs.renameSync(tmp, target);
+    };
+    // A blob counts as stored once its meta file exists (written last).
+    const stored = (sha256) => fs.existsSync(meta(sha256)) && fs.existsSync(file(sha256));
 
     function store(bytes, type, req) {
         const sha256 = crypto.createHash('sha256').update(bytes).digest('hex');
-        if (!fs.existsSync(file(sha256))) {
-            fs.writeFileSync(file(sha256), bytes);
-            fs.writeFileSync(meta(sha256), JSON.stringify({ type, size: bytes.length, uploaded: Math.floor(Date.now() / 1000) }));
+        if (!stored(sha256)) {
+            writeWhole(file(sha256), bytes);
+            writeWhole(meta(sha256), JSON.stringify({ type, size: bytes.length, uploaded: Math.floor(Date.now() / 1000) }));
         }
         const m = JSON.parse(fs.readFileSync(meta(sha256)));
         const base = publicUrl ?? `http://${req.headers.host}`;
@@ -82,7 +91,7 @@ export function createBlossom(dir, publicUrl) {
         }
         if (blob && (req.method === 'GET' || req.method === 'HEAD')) {
             const sha256 = blob[1];
-            if (!fs.existsSync(file(sha256))) { refuse(res, 404, 'not found'); return true; }
+            if (!stored(sha256)) { refuse(res, 404, 'not found'); return true; }
             const m = JSON.parse(fs.readFileSync(meta(sha256)));
             const media = MEDIA.test(m.type ?? '');
             res.writeHead(200, {

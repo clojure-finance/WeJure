@@ -3,7 +3,7 @@
 // Map or Set interop. The logged-in session lives here.
 import * as account from './account.js';
 import * as C from './communities.js';
-import { KIND, createPool, query, repair } from './core.js';
+import { KIND, createPool, repair } from './core.js';
 import { fetchBlob, mediaServersOf, upload } from './media.js';
 import { clear, restore, save, siteConfig } from './session.js';
 import { forgetCache } from './cache.js';
@@ -133,7 +133,8 @@ export async function uploadFile(file) {
 
 // ---- profiles ----
 
-const profiles = new Map();
+const profiles = new Map();   // pk -> promise of its profile
+let waiting = null;           // pk -> resolve, for the next lookup
 const isHash = (x) => typeof x === 'string' && /^[0-9a-f]{64}$/.test(x);
 const text = (x) => (typeof x === 'string' ? x : '');
 
@@ -141,14 +142,26 @@ const text = (x) => (typeof x === 'string' ? x : '');
 // anything), or null.
 const clean = (p) => p && { username: text(p.name), about: text(p.about), picture: isHash(p.picture) ? p.picture : '' };
 
-// {pk, username, about, picture}, or null for an unknown account (or if it
-// cannot be read right now; that is not remembered).
+// {pk, username, about, picture}, or null for an account without a profile
+// (or if it cannot be read right now; null is not remembered). Profiles asked
+// for together (a page of posts, a community's members) are looked up in one
+// query: one request each would run into the relay's subscription limit.
 export function profile(pk) {
     if (!isHash(pk)) return Promise.resolve(null);
     if (!profiles.has(pk)) {
-        profiles.set(pk, account.profile(session(), pk).then(
-            (p) => p && { pk, ...clean(p) },
-            () => { profiles.delete(pk); return null; }));
+        if (!waiting) {
+            const batch = (waiting = new Map());
+            queueMicrotask(async () => {
+                waiting = null;
+                let found = new Map();
+                try { found = await account.profiles(session(), [...batch.keys()]); } catch { /* none found */ }
+                for (const [p, resolve] of batch) {
+                    if (!found.has(p)) profiles.delete(p);
+                    resolve(found.has(p) ? { pk: p, ...clean(found.get(p)) } : null);
+                }
+            });
+        }
+        profiles.set(pk, new Promise((resolve) => waiting.set(pk, resolve)));
     }
     return profiles.get(pk);
 }
@@ -217,11 +230,7 @@ export const deletePost = (id) => outcome(social.deletePost(session(), id));
 
 // The recent posts of the people the user follows that contain the query.
 export async function searchPosts(text) {
-    const s = session();
-    const authors = await social.follows(s);
-    const events = await query(s.pool, s.relays, { kinds: [KIND.POST], authors, limit: 500 });
-    const q = text.toLowerCase();
-    return Promise.all(events.filter((e) => e.content.toLowerCase().includes(q)).map(postView));
+    return Promise.all((await social.searchPosts(session(), text)).map(postView));
 }
 
 // ---- direct messages ----
@@ -353,8 +362,10 @@ export async function community(ref) {
     } catch {
         return null;
     }
-    // owners' clients propose and approve checkpoints on their own, in the background
-    ctx.maintaining ??= C.maintain(ctx)
+    // checkpoint upkeep (C.maintain) in the background, after a random pause,
+    // so that two tabs of one account rarely propose at the same moment
+    ctx.maintaining ??= new Promise((resolve) => setTimeout(resolve, Math.random() * 3000))
+        .then(() => C.maintain(ctx))
         .catch((e) => console.warn('checkpoint upkeep failed:', e))
         .finally(() => { ctx.maintaining = null; });
     const st = ctx.state;

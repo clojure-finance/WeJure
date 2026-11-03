@@ -121,32 +121,25 @@ describe('checkpoints', () => {
         assert.equal(town.state.description, 'a small town');
     });
 
-    test('owners do not approve a checkpoint that would drop a change they know; a newer one covers it', async () => {
+    test('two owners proposing at once each back their own; one checkpoint wins, no fork', async () => {
         const guild = await C.createCommunity(alice, { name: 'Guild', mode: 'open', join: 'open' });
-        const general = C.channelByName(guild, 'general');
         const b = await C.join(bob, guild.ref, relays);
         const c = await C.join(carol, guild.ref, relays);
-        const d = await C.join(dave, guild.ref, relays);
         await C.setRole(guild, bob.pk, 'owner');
         await C.setRole(guild, carol.pk, 'owner');
         await C.refresh(b);
         await C.approve(b, [...b.state.proposals.keys()].at(-1));
         assert.equal(await C.maintain(guild), 'proposed');   // the first, the founder's alone
         await C.updateSettings(guild, { description: 'makers' });
-        await C.sendMessage(d, general, 'misc', 'a message');
-        const [message] = await C.readChannel(d, general);   // dave's view: before the next proposal
 
-        await C.refresh(b);
-        assert.equal(await C.maintain(b, { every: 1 }), 'proposed');
-        await C.retractMessage(d, message.id);   // written on dave's old view: concurrent with bob's proposal
-        await C.refresh(c);
-        assert.equal(c.state.retracted.get(message.id)?.has(dave.pk), true);
-        assert.equal(await C.maintain(c), 'proposed', 'bob\'s would drop the retraction, so carol proposes anew');
-        assert.equal(await C.maintain(guild), 'approved');
+        assert.deepEqual(await Promise.all([C.maintain(b, { every: 1 }), C.maintain(c, { every: 1 })]), ['proposed', 'proposed']);
+        assert.equal(await C.maintain(guild), 'approved', 'alice backs the earliest');
+        assert.equal(await C.maintain(b), null, 'bob backs his own, which still verifies');
+        assert.equal(await C.maintain(c), null, 'so does carol');
         await C.refresh(guild);
         assert.equal(guild.chain.length, 2);
-        assert.equal(guild.chain[1].pubkey, carol.pk);
-        assert.deepEqual(await C.readChannel(guild, general), [], 'the retraction stands');
+        assert.equal(guild.conflict, false);
+        assert.equal(guild.state.description, 'makers');
     });
 
     test('a change a checkpoint dropped (it reached the approvers too late) is redone by its author\'s client', async () => {

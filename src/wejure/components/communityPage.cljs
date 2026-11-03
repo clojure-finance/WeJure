@@ -90,30 +90,38 @@
                older? (r/atom false)                                   ;; the channel has older messages to fetch
                loading-older? (r/atom false)
                list-el (atom nil)                                      ;; the scrolling message list
+               loads (atom 0)                                          ;; numbers load-channel! calls, so a late answer is dropped
+               failed! #(reset! error "Could not load this right now; it is tried again with the next change.")
                ;; scroll: :bottom shows the newest messages, :keep keeps the view
                ;; where it was (older ones added above), :follow stays at the
-               ;; bottom if it was there
+               ;; bottom if it was there. Topics and whether there are older
+               ;; messages come after the messages, whose first page they need.
                load-channel! (fn [scroll]
                                (when-let [c @channel]
-                                 (.then (app/topics ref c)
-                                        #(when (= c @channel) (reset! topics (js->clj % :keywordize-keys true))))
-                                 (.then (app/hasOlderMessages ref c)
-                                        #(when (= c @channel) (reset! older? %)))
-                                 (let [t @topic]
-                                   (.then (app/messages ref c t)
-                                          #(when (and (= c @channel) (= t @topic))
-                                             (let [el @list-el
-                                                   from-bottom (when el (- (.-scrollHeight el) (.-scrollTop el)))
-                                                   at-bottom? (or (nil? el) (< (- from-bottom (.-clientHeight el)) 40))]
-                                               (reset! messages (js->clj % :keywordize-keys true))
-                                               (r/after-render
-                                                (fn []
-                                                  (when-let [el @list-el]
-                                                    (cond
-                                                      (and (= scroll :keep) from-bottom)
-                                                      (set! (.-scrollTop el) (- (.-scrollHeight el) from-bottom))
-                                                      (or (= scroll :bottom) at-bottom?)
-                                                      (set! (.-scrollTop el) (.-scrollHeight el))))))))))))
+                                 (let [t @topic
+                                       n (swap! loads inc)
+                                       current? #(and (= n @loads) (= c @channel) (= t @topic))]
+                                   (-> (app/messages ref c t)
+                                       (.then (fn [ms]
+                                                (when (current?)
+                                                  (let [el @list-el
+                                                        from-bottom (when el (- (.-scrollHeight el) (.-scrollTop el)))
+                                                        at-bottom? (or (nil? el) (< (- from-bottom (.-clientHeight el)) 40))]
+                                                    (reset! messages (js->clj ms :keywordize-keys true))
+                                                    (r/after-render
+                                                     (fn []
+                                                       (when-let [el @list-el]
+                                                         (cond
+                                                           (and (= scroll :keep) from-bottom)
+                                                           (set! (.-scrollTop el) (- (.-scrollHeight el) from-bottom))
+                                                           (or (= scroll :bottom) at-bottom?)
+                                                           (set! (.-scrollTop el) (.-scrollHeight el))))))))
+                                                (js/Promise.all #js [(app/topics ref c) (app/hasOlderMessages ref c)])))
+                                       (.then (fn [[ts more]]
+                                                (when (current?)
+                                                  (reset! topics (js->clj ts :keywordize-keys true))
+                                                  (reset! older? more))))
+                                       (.catch failed!)))))
                load-older! (fn []
                              (let [c @channel
                                    t @topic]
@@ -124,24 +132,29 @@
                                               (when (and (= c @channel) (= t @topic))
                                                 (reset! older? more)
                                                 (load-channel! :keep))))
+                                     (.catch failed!)
                                      (.finally #(reset! loading-older? false))))))
                load! (fn []
-                       (.then (app/community ref)
-                              (fn [v]
-                                (let [v (js->clj v :keywordize-keys true)
-                                      readable (filter :readable (:channels v))
-                                      stays? (some #(= @channel (:id %)) readable)]
-                                  (reset! view v)
-                                  (when-not stays?                     ;; first load, or channel gone
-                                    (reset! channel (:id (first (sort-by :name readable))))
-                                    (reset! topic nil))
-                                  (load-channel! (if stays? :follow :bottom))))))
+                       (-> (app/community ref)
+                           (.then (fn [v]
+                                    (if (and (nil? v) (map? @view))
+                                      (failed!)                        ;; a refresh failed: keep what is shown
+                                      (let [v (js->clj v :keywordize-keys true)
+                                            readable (filter :readable (:channels v))
+                                            stays? (some #(= @channel (:id %)) readable)]
+                                        (reset! view v)
+                                        (when-not stays?               ;; first load, or channel gone
+                                          (reset! channel (:id (first (sort-by :name readable))))
+                                          (reset! topic nil))
+                                        (load-channel! (if stays? :follow :bottom))))))
+                           (.catch failed!)))
                select-channel! (fn [id]
                                  (reset! channel id)
                                  (reset! topic nil)
                                  (reset! topics [])
                                  (reset! messages [])
                                  (reset! older? false)
+                                 (reset! loading-older? false)
                                  (load-channel! :bottom))
                select-topic! (fn [t]
                                (reset! topic t)
@@ -161,7 +174,7 @@
                                 (fn [err]
                                   (cond
                                     err (do (reset! draft text) (reset! error err))
-                                    (= c @channel) (do (reset! topic t) (load-channel! :bottom)))))))
+                                    (= c @channel) (do (reset! error nil) (reset! topic t) (load-channel! :bottom)))))))
                _ (load!)
                stop (app/watchCommunity ref load!)]
     (let [v @view]

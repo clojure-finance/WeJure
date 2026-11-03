@@ -84,7 +84,6 @@ test('WeJure end to end', async ({ browser }) => {
         await alice.getByLabel('Bio').fill('hi there');
         await alice.getByRole('button', { name: 'Save changes' }).click();
         await expect(alice.locator('#app').getByText('hi there')).toBeVisible();   // the dialog is outside #app
-        await alice.waitForTimeout(1000);                                       // let the relay store it before navigating
 
         await alice.goto('/home');
         await alice.getByPlaceholder("What's on your mind?").fill('Hello World');
@@ -202,14 +201,12 @@ test('WeJure end to end', async ({ browser }) => {
         await expectCaretStays(dana, dana.getByLabel('Bio'));
         await dana.getByLabel('Bio').fill("dana's bio");
         await dana.getByRole('button', { name: 'Save changes' }).click();
-        await expect(dana.locator('#app').getByText("dana's bio")).toBeVisible();
-        await dana.waitForTimeout(1000);
+        await expect(dana.locator('#app').getByText("dana's bio")).toBeVisible();   // shown once a relay stored it
 
         const deletes = dana.getByRole('button', { name: 'Delete' });
         await expect(deletes).toHaveCount(2);
         await deletes.first().click();
-        await expect(deletes).toHaveCount(1);
-        await dana.waitForTimeout(1000);
+        await expect(deletes).toHaveCount(1);                                   // gone once a relay stored the deletion
         await dana.reload();
         await expect(dana.getByText("dana's bio")).toBeVisible();
         await expect(deletes).toHaveCount(1);

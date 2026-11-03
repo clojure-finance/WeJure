@@ -1,6 +1,6 @@
 // Reliability specs: the configured relays are the ones used, posts confirmed
-// by the relay, deletions that reach other users, and chat subscriptions that
-// end with the chat page.
+// by the relay, deletions that reach other users, and a chat page that stops
+// listening when left. Console errors and warnings fail them, as elsewhere.
 const { test, expect } = require('@playwright/test');
 const relay = require('./relay');
 
@@ -13,9 +13,22 @@ const RED = {
     buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAIAAAD8GO2jAAAAKklEQVR4nGO4Y2NDU8QwasGoBaMWjFowasGoBaMWjFowasGoBaMWDBULAG93UEwao5ERAAAAAElFTkSuQmCC', 'base64'),
 };
 
-async function newPage(browser) {
+// Console errors and warnings, page errors and alerts fail a test (checked at its end).
+const problems = [];
+test.beforeEach(() => { problems.length = 0; });
+
+function watch(page, who) {
+    page.on('pageerror', (e) => problems.push(`[${who}] page error: ${e.message}`));
+    page.on('console', (m) => {
+        if (m.type() === 'error' || m.type() === 'warning') problems.push(`[${who}] console.${m.type()}: ${m.text()}`);
+    });
+    page.on('dialog', async (d) => { problems.push(`[${who}] alert: ${d.message()}`); await d.accept(); });
+    return page;
+}
+
+async function newPage(browser, who) {
     const context = await browser.newContext({ baseURL: BASE, viewport: { width: 1400, height: 900 } });
-    return context.newPage();
+    return watch(await context.newPage(), who);
 }
 
 async function register(page, name) {
@@ -77,7 +90,7 @@ test('the app uses the relays and media servers listed in config.js', async ({ b
         contentType: 'text/javascript',
         body: 'window.WEJURE_CONFIG = { relays: ["ws://127.0.0.1:8020"], mediaServers: ["http://127.0.0.1:8020"] };',
     }));
-    const page = await context.newPage();
+    const page = watch(await context.newPage(), 'configured');
     const sockets = [];
     page.on('websocket', (ws) => sockets.push(ws.url()));
     const uploads = [];
@@ -89,6 +102,7 @@ test('the app uses the relays and media servers listed in config.js', async ({ b
     expect(uploads.length).toBeGreaterThan(0);                                // the profile picture
     expect(uploads.every((url) => url.startsWith('http://127.0.0.1:8020/'))).toBe(true);
     await context.close();
+    expect(problems).toEqual([]);
 });
 
 test('a post the relay does not confirm stays in the composer', async ({ browser }) => {
@@ -102,7 +116,7 @@ test('a post the relay does not confirm stays in the composer', async ({ browser
         ws.onMessage((message) => { if (online) server.send(message); });
         server.onMessage((message) => ws.send(message));
     });
-    const page = await context.newPage();
+    const page = watch(await context.newPage(), 'writer');
     await register(page, writer);
     await login(page, writer);
     const composer = page.getByPlaceholder("What's on your mind?");
@@ -130,13 +144,14 @@ test('a post the relay does not confirm stays in the composer', async ({ browser
     await expect(page.getByText(/was not saved/)).toHaveCount(0);
     expect(await relay.postTexts(writer)).toEqual(['confirmed post', 'retried post']);
     await context.close();
+    expect(problems).toEqual([]);
 });
 
 test("a deleted post disappears from followers' feeds without a reload", async ({ browser }) => {
     const author = 'author' + N;
     const reader = 'reader' + N;
-    const authorPage = await newPage(browser);
-    const readerPage = await newPage(browser);
+    const authorPage = await newPage(browser, 'author');
+    const readerPage = await newPage(browser, 'reader');
     await register(authorPage, author);
     await login(authorPage, author);
     await register(readerPage, reader);
@@ -160,19 +175,24 @@ test("a deleted post disappears from followers' feeds without a reload", async (
     await expect(readerPage.getByText('lasting post')).toBeVisible();
     await authorPage.context().close();
     await readerPage.context().close();
+    expect(problems).toEqual([]);
 });
 
 test('leaving the chat page stops its subscription to incoming messages', async ({ browser }) => {
     const talker = 'talker' + N;
     const listener = 'listener' + N;
-    const talkerPage = await newPage(browser);
+    const talkerPage = await newPage(browser, 'talker');
     const listenerContext = await browser.newContext({ baseURL: BASE, viewport: { width: 1400, height: 900 } });
     // Counts the gift-wrapped messages (kind 1059) the relay pushes to the
-    // listener's page. The page subscribes with limit 0 for new ones only.
+    // listener's page, and the requests the page sends.
     let wrapsPushed = 0;
+    let requests = 0;
     await listenerContext.routeWebSocket(/localhost:8020/, (ws) => {
         const server = ws.connectToServer();
-        ws.onMessage((message) => server.send(message));
+        ws.onMessage((message) => {
+            if (String(message).startsWith('["REQ"')) requests++;
+            server.send(message);
+        });
         server.onMessage((message) => {
             try {
                 const [type, , event] = JSON.parse(message);
@@ -181,7 +201,7 @@ test('leaving the chat page stops its subscription to incoming messages', async 
             ws.send(message);
         });
     });
-    const listenerPage = await listenerContext.newPage();
+    const listenerPage = watch(await listenerContext.newPage(), 'listener');
     await register(talkerPage, talker);
     await login(talkerPage, talker);
     await register(listenerPage, listener);
@@ -197,12 +217,14 @@ test('leaving the chat page stops its subscription to incoming messages', async 
     await goHome(listenerPage);
     // Still the same page: a reload would end every subscription trivially.
     await listenerPage.waitForTimeout(500);
-    const before = wrapsPushed;
+    const [wrapsBefore, requestsBefore] = [wrapsPushed, requests];
     await send(talkerPage, 'two');
     await listenerPage.waitForTimeout(2000);
-    // once, to the session's copy of its gift wraps (sync.js), which stays
-    // subscribed while the page lives; pages only listen to it
-    expect(wrapsPushed - before).toBe(1);
+    // The message reaches the session's copy of its gift wraps (sync.js),
+    // which stays subscribed while the page lives, once; but the chat page no
+    // longer listens to it, so nothing reloads the conversation or contacts.
+    expect(wrapsPushed - wrapsBefore).toBe(1);
+    expect(requests - requestsBefore).toBe(0);
 
     // Reopening the conversation reads it in full, each message once.
     await listenerPage.getByRole('link', { name: 'Message' }).click();
@@ -212,4 +234,5 @@ test('leaving the chat page stops its subscription to incoming messages', async 
     await expect(listenerPage.getByText('two', { exact: true })).toHaveCount(1);
     await talkerPage.context().close();
     await listenerContext.close();
+    expect(problems).toEqual([]);
 });

@@ -47,21 +47,26 @@ together with the server, also at http://localhost:8020.
   `PORT` and `HOST` environment variables work too. To reach it from other
   machines, use `--host 0.0.0.0` behind a TLS proxy, so the relay is
   reachable as `wss://`. Its relay keeps deletion requests and refuses deleted
-  events if anyone sends them again. Its media server accepts uploads signed
-  by any account (a public deployment would want limits there). It serves
-  pictures, audio and video as such, and anything else as a sandboxed
-  download, since it shares its origin with the app.
+  events if anyone sends them again; it closes connections that send a
+  message over 256 KB, and allows 100 subscriptions per connection (past that
+  it closes the oldest). Its media server accepts uploads signed by any
+  account (a public deployment would want limits there). It serves pictures,
+  audio and video as such, and anything else as a sandboxed download, since it
+  shares its origin with the app.
 
 ## Security and encryption
 - **Identity**: an account is a secp256k1 key pair; the public key is the
   identity. To log in with a username and password from any device, the
   secret key is stored encrypted with the password (NIP-49, scrypt) on the
-  relays. So a weak password can be guessed offline: use a long one.
+  relays. So a weak password can be guessed offline: use a long one. Anyone
+  can publish such a claim for any username, so login tries only claims at
+  WeJure's scrypt cost (2^16), and at most ten.
 - **Data ownership**: every event is signed by its author and checked by
   every reader, so nobody can change or fake anyone else's posts, profile or
-  follows. A relay can only withhold events, and the other relays have them.
-  `test/node/redundancy.test.js` includes a relay that rewrites what it
-  serves.
+  follows. A relay can only withhold events, and the other relays have them:
+  each relay is read on its own, so one that sends forged copies under real
+  ids cannot hide the real events either. `test/node/redundancy.test.js`
+  includes a relay that rewrites what it serves.
 - **Usernames** are not unique on an open network. Registration refuses a
   name that is already taken, but two accounts can still race for one. Then
   `/user/<name>` lists the claimants instead of picking one, and
@@ -72,25 +77,29 @@ together with the server, also at http://localhost:8020.
   for the recipient, and wrapped in an event from a throwaway key with a
   blurred time. Relays see that someone received something, not from whom
   and not what.
-- **Blocking** uses a NIP-51 mute list encrypted to its owner, so nobody can
-  see who blocks whom. It works on the blocker's side.
+- **Blocking** uses a NIP-51 mute list whose entries WeJure encrypts to its
+  owner, so nobody can see who blocks whom; public and NIP-04 entries that
+  other Nostr apps write count too. It works on the blocker's side.
 - **Communities** are designed in [docs/COMMUNITIES.md](docs/COMMUNITIES.md).
   In private communities, relays see neither the community, the senders nor
   the topics (they can tell which messages under one key share a sender, not
-  who that is). Members can read exactly the periods they belonged to. Removed
-  members cannot slip in backdated messages or actions. Changing the owners
-  needs a majority of them, so with three or more owners, one lost or rogue
-  owner can neither take over nor freeze the community.
+  who that is, and which envelopes hold checkpoints). Members can read exactly
+  the periods they belonged to. Removed members cannot slip in backdated
+  messages or actions. Changing the owners needs a majority of them, so with
+  three or more owners, one lost or rogue owner can neither take over nor
+  freeze the community; a checkpoint likewise needs a majority of the owners,
+  and devices keep the checkpoints they accepted.
 - **The device cache**: each gift wrap and envelope is decrypted and checked
   once. The results, and the copies of relay data that let a page load fetch
   only what is new (see Fetching), are kept in IndexedDB, one database per
-  account, encrypted (AES-GCM) with a key derived from the account key. Which
-  filters and values the copies belong to is stored only as an HMAC. That key is
-  only in the logged-in tab, so the cache is unreadable without the
-  password. Logging out deletes the database, and other tabs of the account
-  then close it and carry on in memory. Every event is checked against
-  its id (the hash of its content), so a relay cannot slip other content in
-  under an id the cache already knows.
+  account, encrypted (AES-GCM) with a key derived from the account key, and
+  keyed by HMACs (of event ids, and of which filters and values the copies
+  belong to), so it does not show what the user reads or follows. That key is
+  only in the logged-in tab, so the cache is unreadable without the password.
+  Logging out deletes the database, and other tabs of the account then close
+  it and carry on in memory. Every event is checked against its id (the hash
+  of its content), so a relay cannot slip other content in under an id the
+  cache already knows.
 - **Public data**: profiles, posts, follows, relay lists, and everything in
   open communities.
 - **Data from strangers** (profiles, messages, relay lists, community
@@ -100,8 +109,9 @@ together with the server, also at http://localhost:8020.
   forward secrecy). Deletions are requests: relays that ignore NIP-09 may
   keep a deleted post, though WeJure hides it once any relay has the
   request. A flood of gift wraps or community events cannot hide older ones
-  (reads page through everything), but it costs download time on the first
-  read of a session.
+  (reads page through everything, up to 100 000 events per request; a single
+  second that holds more than a page is cut short), but it costs download
+  time the first time on a device.
 
 ## Data model
 Everything is a Nostr event (NIP-01). The kinds WeJure uses:
@@ -125,28 +135,33 @@ stays logged in and closing the tab logs out. Decrypted events are cached in
 IndexedDB (`wejure-<public key>`, encrypted; see Security).
 
 ## Fetching
-Direct messages, community operations and channel messages are read through
-mirrors (`sync.js`): the first read fetches everything, page by page, and
-opens one live subscription per mirror and relay, which stays open for the
-page session. After that, a read asks each relay only to confirm it has sent
-everything so far (one empty round trip), and new events arrive through the
-subscription. Pages that follow changes (the chat, a community) listen to
-the mirrors instead of subscribing themselves, so each event arrives once per
-relay. If a subscription drops, the next read catches up from the
-newest event that relay had sent, less a minute for slow clocks (two days for
-gift wraps, which are backdated on purpose). The copies are saved in the
-device cache, so after a page load the first read catches up the same way
-instead of fetching everything, and a community whose relays are all down
-still opens. While a page listens, a dropped subscription is restored after
-two seconds. Channels are paged mirrors: they fetch their newest 100
-messages, and older ones when the reader scrolls up (or presses "Load older
-messages"). Opening a community fetches its operations only, not the
-messages of its channels, and only those since its latest checkpoint: owners'
-clients write and approve checkpoints on their own (see
-docs/COMMUNITIES.md), so a new device starts from a snapshot. A community's
-state is computed again only when new operations arrive. `npm run bench` shows the effect: with 600 messages and 200
-direct messages, a member's page update when a message arrives went from
-about 4500 events and 160 ms to 1 event and 10 ms.
+- **Mirrors** (`sync.js`): direct messages, community operations and channel
+  messages are read through local copies of relay data. The first read
+  fetches what a relay holds, page by page, and opens one live subscription
+  per mirror and relay, which stays open for the page session. Later reads
+  ask each relay only to confirm it has sent everything so far (one empty
+  round trip); new events arrive through the subscription. Pages that follow
+  changes (the chat, communities) listen to the mirrors, so each event
+  arrives once per relay; only the feed subscribes on its own (`live.js`).
+- **Catching up**: if a subscription drops, the next read catches up from the
+  newest event that relay had sent, less a minute for slow clocks (two days
+  for gift wraps, which are backdated on purpose); while a page listens, the
+  subscription comes back after two seconds. The copies are saved in the
+  device cache, so after a page load a read catches up the same way instead
+  of fetching everything, and a community whose relays are all down still
+  opens.
+- **Channels** are paged: the first read fetches the newest 100 messages (in
+  open communities, the newest 100 of the whole community), and older ones
+  come when the reader scrolls up or presses "Load older messages".
+- **Communities**: opening one fetches its operations, not its channels'
+  messages, and only those since its latest checkpoint: owners' clients write
+  and approve checkpoints on their own (see docs/COMMUNITIES.md), so a new
+  device starts from a snapshot. The state is computed again only when new
+  operations arrive.
+
+`npm run bench` shows the effect: with 600 messages and 200 direct messages,
+a member's page update when a message arrives went from about 4500 events and
+160 ms to 1 event and 10 ms.
 
 ## Code layout
 - `src/wejure/core.cljs`: routes, and redirects between logged-in and logged-out pages
@@ -162,17 +177,22 @@ about 4500 events and 160 ms to 1 event and 10 ms.
   - `communities.js`: the community input and output.
 - `server/`: `index.js` (app, relay and media server on one port), `store.js` (the relay's event store on `node:sqlite`), `blossom.js` (the media server)
 - `public/config.js`: relays and media servers for this site
-- `test/node/`: the data layer against several real server instances that the tests crash, plus a lying relay and a lying media server
+- `scripts/dev.js`: `npm run dev`
+- `docs/COMMUNITIES.md`: the community design
+- `test/node/`: the data layer against several real server instances that the tests crash (`harness.js`), plus a lying relay and a lying media server
 - `test/e2e/`: browser tests of the release build
+- `test/bench/`: `npm run bench`
 
 ## Testing
 - `npm test`: the Node tests (about 1 min). They cover accounts, the feed,
-  messages, media, redundancy across crashing relays, live updates, fetching
-  only what is new (with saved copies, on fake-indexeddb), paging through
-  long channels, the community rules and attacks on them, and checkpoints.
+  messages, media, the server's own protections, redundancy across crashing
+  and lying relays, live updates, the device cache, fetching only what is new
+  (with saved copies, on fake-indexeddb), paging through long channels, the
+  community rules and attacks on them, and checkpoints.
 - `npm run test:e2e`: builds the release version and runs Playwright through
   every page with several users, communities included (about 1 min). It
-  fails on any console error. Install its browser once with
+  fails on any console error or warning, page error or alert. Install its
+  browser once with
   `npx playwright install chromium`. It starts its own server with empty
   data on port 8020, so stop any WeJure server there first.
 - `npm run bench`: times loading, reading and sending in a community, and
@@ -192,6 +212,7 @@ The project is under development. Not built yet:
 - unblocking;
 - a size limit for the saved copies of relay data (see Fetching): they grow
   without limit, until logout;
+- paging for direct messages: the first read on a device fetches them all;
 - relays syncing with each other (NIP-77); clients repair their own data
   instead (see Configuration);
 - deleting media;
