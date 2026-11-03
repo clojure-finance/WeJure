@@ -30,5 +30,9 @@
     "@playwright/test": "^1.64.1",
     "fake-indexeddb": "^6.2.7",
     "shadow-cljs": "^3.5.5"
+  },
+  "overrides": {
+    "zod": "4.6.7",
+    "zod-validation-error": "5.0.0"
   }
 }
