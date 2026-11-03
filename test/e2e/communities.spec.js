@@ -151,10 +151,11 @@ test('communities end to end', async ({ browser }) => {
                 req.onsuccess = () => resolve(req.result);
                 req.onerror = () => reject(req.error);
             });
-            const rows = await new Promise((resolve) => {
-                const req = db.transaction('decrypted').objectStore('decrypted').getAll();
+            // decrypted entries, in both generations (cache.js)
+            const rows = (await Promise.all(['decrypted-a', 'decrypted-b'].map((store) => new Promise((resolve) => {
+                const req = db.transaction(store).objectStore(store).getAll();
                 req.onsuccess = () => resolve(req.result);
-            });
+            })))).flat();
             db.close();
             const bytes = rows.map((r) => new TextDecoder().decode(r.data)).join('');
             return { rows: rows.length, plaintext: bytes.includes('who is in?') || bytes.includes('Hiking') };

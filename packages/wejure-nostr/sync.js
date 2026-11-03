@@ -27,6 +27,11 @@
 // in the encrypted device cache (cache.js), so after a page load the first
 // sync catches up from the saved marks instead of fetching everything.
 //
+// So that the saved copies do not grow without limit, the first read of
+// values in a page session (sync or older; watching is not reading) drops
+// what they no longer need, in memory and (at the next save) in the saved
+// copy (see trim). cache.js deletes the buckets no page has read for a month.
+//
 // Screens that follow changes (watched) listen to the mirrors rather than
 // subscribing themselves, so each event arrives once. While anyone listens, a
 // dropped subscription is restored after a pause, catching up as above.
@@ -62,6 +67,7 @@ const SAVE_AFTER = 500;   // ms: changes to a bucket are saved together
 // Paged mirrors: events per page. A shorter answer means the relay has no
 // more, which holds since relays return at least MAYBE_MORE events.
 const WINDOW = MAYBE_MORE;
+const KEEP = 5 * WINDOW;   // paged mirrors: events kept from one page session to the next (see trim)
 const RETRY_AFTER = 2000;  // ms: a listened-to subscription that dropped is restored after this
 
 // Subscribes to filters at a relay. Resolves with the subscription once the
@@ -166,6 +172,10 @@ function createMirror(pool, base, field, store, paged) {
     const unsaved = new Map();   // value -> events not saved yet (marks are saved whole)
     const listeners = new Set(); // {relays, values, fn}: see watched()
     const retries = new Map();   // url -> timer restoring its subscription
+    const readValues = new Set(); // values read this page session (sync, older)
+    const stale = new Set();     // values whose saved copy was last read before today
+    const trimmed = new Set();   // values trimmed this page session (see trim)
+    const rewrites = new Set();  // values whose saved copy the next save replaces whole
     let saving = null;           // the timer of the next save
     let saved = Promise.resolve();   // saves run one at a time, so marks never land before their events
     const tagName = field.startsWith('#') ? field.slice(1) : null;
@@ -201,8 +211,16 @@ function createMirror(pool, base, field, store, paged) {
             const changes = [...unsaved];
             unsaved.clear();
             return Promise.all(changes.map(async ([v, events]) => {
+                if (rewrites.delete(v)) {
+                    // trimmed: what the bucket holds now replaces the saved copy
+                    if (!(await store.replaceBucket(nameOf(v), [...buckets.get(v).values()], positionsOf(v), readValues.has(v)))) {
+                        rewrites.add(v);
+                        unsaved.set(v, unsaved.get(v) ?? []);
+                    }
+                    return;
+                }
                 // not saved (storage full, say): the events go with the next save
-                if (!(await store.saveBucket(nameOf(v), events, positionsOf(v)))) unsaved.set(v, [...events, ...(unsaved.get(v) ?? [])]);
+                if (!(await store.saveBucket(nameOf(v), events, positionsOf(v), readValues.has(v)))) unsaved.set(v, [...events, ...(unsaved.get(v) ?? [])]);
             }));
         }).catch((err) => console.warn('could not save a mirror:', err));
         return saved;
@@ -221,17 +239,17 @@ function createMirror(pool, base, field, store, paged) {
             buckets.set(v, new Map());
             loads.set(v, (async () => {
                 if (!store) return;
-                const { events, marks } = await store.loadBucket(nameOf(v));
-                for (const e of events) {
+                const saved = await store.loadBucket(nameOf(v));
+                for (const e of saved.events) {
                     trust(e);
                     buckets.get(v).set(e.id, e);
                 }
-                for (const [url, saved] of Object.entries(marks)) {
+                for (const [url, { mark, floor }] of Object.entries(saved.marks)) {
                     const r = at(url);
-                    const { mark, floor } = typeof saved === 'number' ? { mark: saved } : saved;
                     r.marks.set(v, Math.max(r.marks.get(v) ?? 0, mark ?? 0));
                     if (typeof floor === 'number' && !r.floors.has(v)) r.floors.set(v, floor);
                 }
+                if (saved.stale) stale.add(v);
             })().catch((err) => console.warn('could not load a mirror:', err)));
         }
         return loads.get(v);
@@ -406,6 +424,49 @@ function createMirror(pool, base, field, store, paged) {
         changed(v);
     }
 
+    // On the first read of values this page session (they hold what was saved,
+    // plus what arrived since), drops the events older than a cut, from memory
+    // and, at the next save, from the saved copy. Each floor moves up to the
+    // cut, so the dropped events are fetched again if needed: by older() in
+    // paged mirrors, by a sync from an earlier time in full ones. Paged: the
+    // cut keeps the newest KEEP events of the values read together, and the
+    // rest of the oldest second; one cut for all of them, so the history
+    // shown has no holes. Full: the cut is `from`, the time the reader needs
+    // everything from (a read without one keeps everything).
+    function trim(values, from) {
+        if (!paged && !from) return;
+        const vs = values.filter((v) => !trimmed.has(v));
+        vs.forEach((v) => trimmed.add(v));
+        let cut = from;
+        if (paged) {
+            const times = [...new Map(vs.flatMap((v) => [...buckets.get(v)].map(([id, e]) => [id, e.created_at]))).values()];
+            if (times.length <= KEEP) return;
+            cut = times.sort((a, b) => b - a)[KEEP - 1];
+        }
+        for (const v of vs) {
+            const bucket = buckets.get(v);
+            const old = [...bucket.values()].filter((e) => e.created_at < cut);
+            if (!old.length) continue;
+            old.forEach((e) => bucket.delete(e.id));
+            for (const r of relays.values()) {
+                if ((r.marks.has(v) || r.floors.has(v)) && !(r.floors.get(v) >= cut - 1)) setFloor(r, v, cut - 1);
+            }
+            rewrites.add(v);
+            changed(v);
+        }
+    }
+
+    // Values are read (sync, older): trimmed on their first read this page
+    // session, and saved as read today if they were last read before.
+    function reading(values, from) {
+        for (const v of values) {
+            if (readValues.has(v)) continue;
+            readValues.add(v);
+            if (stale.delete(v)) changed(v);
+        }
+        trim(values, from);
+    }
+
     // One page (WINDOW events, newest first, plus the rest of the oldest
     // second) per chunk of values; per page the values it covers, its events,
     // and the floor below it (0 if the relay has nothing older). Null if the
@@ -457,6 +518,7 @@ function createMirror(pool, base, field, store, paged) {
     async function older(urls, values) {
         values = [...new Set(values)];
         await Promise.all(values.map(load));
+        reading(values);
         await Promise.all(relayUrls(urls).map((url) => queued(url, () => olderAt(url, values))));
         return hasOlder(urls, values);
     }
@@ -509,6 +571,7 @@ function createMirror(pool, base, field, store, paged) {
     async function sync(urls, values, from) {
         values = [...new Set(values)];
         await Promise.all(values.map(load));
+        reading(values, from);
         await Promise.all(relayUrls(urls).map((url) => queued(url, () => step(url, values, from))));
         const out = new Map();
         for (const v of values) for (const [id, e] of buckets.get(v)) out.set(id, e);

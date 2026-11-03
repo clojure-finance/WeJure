@@ -158,6 +158,16 @@ IndexedDB (`wejure-<public key>`, encrypted; see Security).
   and approve checkpoints on their own (see docs/COMMUNITIES.md), so a new
   device starts from a snapshot. The state is computed again only when new
   operations arrive.
+- **Saved copies stay small**: reading a channel keeps its newest 500
+  messages (in open communities, the whole community's) for the next page
+  load, and older ones are fetched again on scrolling up; a community keeps
+  only the operations since its latest checkpoint. What no page has read for
+  30 days is deleted (watching a channel for new messages is not reading it),
+  and a decrypted entry not read for 30 to 60 days goes too. Only the inbox
+  (gift wraps) keeps everything, since direct messages are not paged yet. One
+  tab per account owns the saved copies (the first to open them): only it
+  writes and trims them, so tabs never pull data from under each other; other
+  tabs read them and keep what they fetch in memory.
 
 `npm run bench` shows the effect: with 600 messages and 200 direct messages,
 a member's page update when a message arrives went from about 4500 events and
@@ -187,8 +197,9 @@ a member's page update when a message arrives went from about 4500 events and
 - `npm test`: the Node tests (about 1 min). They cover accounts, the feed,
   messages, media, the server's own protections, redundancy across crashing
   and lying relays, live updates, the device cache, fetching only what is new
-  (with saved copies, on fake-indexeddb), paging through long channels, the
-  community rules and attacks on them, and checkpoints.
+  (with saved copies, on fake-indexeddb), how the saved copies stay small,
+  paging through long channels, the community rules and attacks on them, and
+  checkpoints.
 - `npm run test:e2e`: builds the release version and runs Playwright through
   every page with several users, communities included (about 1 min). It
   fails on any console error or warning, page error or alert. Install its
@@ -210,9 +221,8 @@ site's stored data.
 ## Status
 The project is under development. Not built yet:
 - unblocking;
-- a size limit for the saved copies of relay data (see Fetching): they grow
-  without limit, until logout;
-- paging for direct messages: the first read on a device fetches them all;
+- paging for direct messages: the first read on a device fetches them all,
+  and the saved inbox keeps them all;
 - relays syncing with each other (NIP-77); clients repair their own data
   instead (see Configuration);
 - deleting media;
