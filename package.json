@@ -1,8 +1,10 @@
 {
   "private": true,
   "scripts": {
-    "dev": "shadow-cljs watch app",
+    "start": "node server/index.js",
+    "dev": "node scripts/dev.js",
     "release": "shadow-cljs release app",
+    "test": "node --test --test-concurrency=1 'test/node/*.test.js'",
     "test:e2e": "shadow-cljs release app && playwright test -c test/e2e"
   },
   "dependencies": {
@@ -10,16 +12,21 @@
     "@emotion/styled": "^11.14.0",
     "@mui/icons-material": "^9.5.0",
     "@mui/material": "^9.5.0",
+    "@nostr-relay/common": "0.0.41",
+    "@nostr-relay/core": "0.0.41",
+    "@nostr-relay/validator": "0.0.41",
     "buffer": "^6.0.3",
     "crypto-js": "^4.2.0",
     "express": "^4.18.2",
     "gun": "^0.2020.1239",
+    "nostr-tools": "2.25.2",
     "react": "^19.2.0",
-    "react-dom": "^19.2.0"
+    "react-dom": "^19.2.0",
+    "wejure-nostr": "file:packages/wejure-nostr",
+    "ws": "8.21.3"
   },
   "devDependencies": {
     "@playwright/test": "^1.64.1",
     "shadow-cljs": "^3.5.5"
-  },
-  "packageManager": "yarn@1.22.22+sha512.a6b2f7906b721bba3d67d4aff083df04dad64c399707841b7acf00f6b133b7ac24255f2652fa22ae3534329dc6180534e98d17432037ff6fd140556e2bb3137e"
+  }
 }

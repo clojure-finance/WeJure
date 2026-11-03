@@ -1,0 +1,9 @@
+{
+  "name": "wejure-nostr",
+  "private": true,
+  "description": "WeJure's data layer on Nostr and Blossom (used by the app and by test/node).",
+  "type": "module",
+  "exports": {
+    "./*.js": "./*.js"
+  }
+}
