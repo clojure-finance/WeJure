@@ -65,7 +65,14 @@ const server = http.createServer(async (req, res) => {
     }
 });
 
-new WebSocketServer({ server }).on('connection', (ws) => {
+// Messages to the relay are capped (ws's default is 100 MB), so a client cannot
+// make the server validate a huge message and run out of memory (zod, which
+// the validator uses, has such a flaw with no fixed version yet). 256 KB fits
+// the largest event the validator allows (100 KB of text) with room for its
+// tags; strfry's default is 128 KB.
+const MAX_MESSAGE = 256 * 1024;
+
+new WebSocketServer({ server, maxPayload: MAX_MESSAGE }).on('connection', (ws) => {
     relay.handleConnection(ws);
     ws.on('message', async (data) => {
         try {

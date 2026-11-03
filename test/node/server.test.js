@@ -1,8 +1,8 @@
-// The server's own protections: what the media server serves and accepts, and
-// which files the app server hands out.
+// The server's own protections: what the media server serves and accepts, how
+// big a relay message may be, and which files the app server hands out.
 import { after, before, describe, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { generateSecretKey, getPublicKey } from 'nostr-tools/pure';
+import { finalizeEvent, generateSecretKey, getPublicKey } from 'nostr-tools/pure';
 import { crashAll, startAll, wejureServer } from './harness.js';
 import { upload } from 'wejure-nostr/media.js';
 
@@ -38,6 +38,20 @@ describe('server', () => {
         assert.equal(res.status, 401);
         const mirror = await fetch(`${server.http}/mirror`, { method: 'PUT', body: JSON.stringify({ url: 'http://127.0.0.1:1/' }) });
         assert.equal(mirror.status, 401);
+    });
+
+    test('the relay closes a connection that sends a message over 256 KB, and handles smaller ones', async () => {
+        // Resolves with the relay's first reply, or with the close code.
+        const send = (message) => new Promise((resolve) => {
+            const ws = new WebSocket(server.url);
+            ws.onopen = () => ws.send(message);
+            ws.onmessage = (m) => { resolve(JSON.parse(m.data)[0]); ws.close(); };
+            ws.onclose = (e) => resolve(e.code);
+        });
+        const post = (size) => JSON.stringify(['EVENT', finalizeEvent(
+            { kind: 1, content: 'a'.repeat(size), tags: [], created_at: Math.floor(Date.now() / 1000) }, generateSecretKey())]);
+        assert.equal(await send(post(100 * 1024)), 'OK');   // the most text an event may have
+        assert.equal(await send(post(300 * 1024)), 1009, 'closed: message too big');
     });
 
     test('the app server hands out files in public/ only', async () => {
