@@ -1,17 +1,16 @@
 (ns wejure.components.navigationBar
-  (:require ["../js/account" :as acc]
-            ["@mui/material/AppBar$default" :as AppBar]
-            ["@mui/material/Avatar$default" :as Avatar]
+  (:require ["@mui/material/AppBar$default" :as AppBar]
             ["@mui/material/Button$default" :as Button]
             ["@mui/material/Toolbar$default" :as Toolbar]
             ["@mui/material/Typography$default" :as Typography]
+            ["wejure-nostr/app.js" :as app]
             [reagent.core :as r]
             [reitit.frontend.easy :as reitit-fe]
             [wejure.common :as common]
             [wejure.components.textField :refer [text-field]]))
 
 (defn- logout []
-  (acc/logout)
+  (app/logout)
   (set! js/window.location.href (reitit-fe/href :wejure.core/title)))
 
 (defn- bar [& children]
@@ -96,8 +95,10 @@
         :sx {:font-size "12px" :margin "0 20px 0 0"}}
        username]
       [:a {:href (reitit-fe/href :wejure.core/user {:username username})}
-       [:> Avatar {:sx {:width 50 :height 50}
-                   :src (common/ipfs-url (js/sessionStorage.getItem "icon_cid"))}]]
+       [common/avatar {:picture (common/current-picture)
+                       :author (common/current-pub)
+                       :username username
+                       :sx {:width 50 :height 50}}]]
       (if (= page :chat)
         [:> Button
          {:color "inherit"

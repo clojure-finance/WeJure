@@ -1,14 +1,13 @@
 (ns wejure.components.registrationPage
-  (:require ["../js/account" :as acc]
-            ["@mui/icons-material/AddAPhotoSharp$default" :as AddAPhotoSharpIcon]
+  (:require ["@mui/icons-material/AddAPhotoSharp$default" :as AddAPhotoSharpIcon]
             ["@mui/material/Box$default" :as Box]
             ["@mui/material/Button$default" :as Button]
             ["@mui/material/CircularProgress$default" :as CircularProgress]
             ["@mui/material/IconButton$default" :as IconButton]
             ["@mui/material/Typography$default" :as Typography]
+            ["wejure-nostr/app.js" :as app]
             [reagent.core :as r]
             [reitit.frontend.easy :as reitit-fe]
-            [wejure.common :as common]
             [wejure.components.textField :refer [text-field]]))
 
 (defn- valid-username? [username]                                         ;; 3-20 letters, digits or underscores
@@ -17,20 +16,15 @@
 (defn- valid-password? [password]
   (<= 8 (count password)))
 
-;; uploads the profile picture to IPFS, then creates the account
+;; creates the account, with the profile picture if one was chosen
 (defn- submit-profile [name password photo loading]
   (reset! loading true)
-  (-> (common/ipfs-add @photo)
-      (.then (fn [cid]
-               (acc/register @name @password cid
-                             (fn [err]
-                               (reset! loading false)
-                               (if err
-                                 (js/alert err)
-                                 (set! js/window.location.href (reitit-fe/href :wejure.core/login)))))))
-      (.catch (fn [^js err]
-                (reset! loading false)
-                (js/alert (str "Could not upload the profile picture: " (.-message err)))))))
+  (.then (app/register @name @password @photo)
+         (fn [err]
+           (reset! loading false)
+           (if err
+             (js/alert err)
+             (set! js/window.location.href (reitit-fe/href :wejure.core/login))))))
 
 (defn registration-page []
   (let [name (r/atom "") password (r/atom "") password-confirm (r/atom "") profile-pic (r/atom nil) loading (r/atom false)]
@@ -119,7 +113,7 @@
          [:> Typography
           {:variant "h6"
            :component "div"}
-          "4. Upload a profile picture"]
+          "4. Upload a profile picture (optional)"]
 
          [:label
           {:html-for "upload-image" :style {:margin "0 auto"}}
@@ -136,7 +130,7 @@
          [:> Typography
           {:variant "h6"
            :component "div"
-           :sx {:color (if @profile-pic "#070707" "#d32f2f")
+           :sx {:color (if @profile-pic "#070707" "grey")
                 :font-size "12px"
                 :font-weight "500"
                 :text-align "center"}}
@@ -153,7 +147,6 @@
            :disabled (or (not (valid-username? @name))
                          (not (valid-password? @password))
                          (not= @password @password-confirm)
-                         (nil? @profile-pic)
                          @loading)}
           "Submit"]
          [:> CircularProgress {:sx {:margin "10px" :visibility (when (not @loading) "hidden")}}]]]])))

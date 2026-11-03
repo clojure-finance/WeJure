@@ -1,7 +1,5 @@
 (ns wejure.components.profilePage
-  (:require ["../js/post" :as post]
-            ["../js/profile" :as profile]
-            ["@mui/icons-material/Close$default" :as CloseIcon]
+  (:require ["@mui/icons-material/Close$default" :as CloseIcon]
             ["@mui/material/Avatar$default" :as Avatar]
             ["@mui/material/Box$default" :as Box]
             ["@mui/material/Button$default" :as Button]
@@ -12,10 +10,11 @@
             ["@mui/material/IconButton$default" :as IconButton]
             ["@mui/material/Paper$default" :as Paper]
             ["@mui/material/Typography$default" :as Typography]
+            ["wejure-nostr/app.js" :as app]
             [reagent.core :as r]
             [reitit.frontend.easy :as reitit-fe]
             [wejure.common :as common]
-            [wejure.components.postCard :refer [post-list sync-posts!]]
+            [wejure.components.postCard :refer [add-posts! load-more post-list watch!]]
             [wejure.components.textField :refer [text-field]]))
 
 (defn- user-banner [username & body]
@@ -39,7 +38,7 @@
 
 ;; Several accounts claim this name; nobody is picked automatically, so a
 ;; later registration can never hijack an existing user's URL. Each claimant
-;; links to its canonical /user/~<pub> page.
+;; links to its canonical /user/~<pubkey> page.
 (defn- user-ambiguous [username pubs]
   [user-banner username
    [:> Typography {:sx {:color "grey"} :variant "h5"}
@@ -50,20 +49,30 @@
       [:> Typography {:sx {:font-size "12px" :word-break "break-all"}}
        pub]])])
 
+(defn- load-page! [posts next pub]
+  (.then (app/postsPage #js {:authors #js [pub] :until @next})
+         (fn [^js page]
+           (add-posts! posts (.-posts page))
+           (reset! next (.-next page)))))
+
 (defn- loaded-profile-page [username pub]
   (r/with-let [self (common/current-pub)
-               info (r/atom {:loaded? false})                              ;; plus :icon_cid, :bio, :is_following
+               info (r/atom {:loaded? false})                              ;; plus :picture, :about, :following?
                posts (r/atom {})
+               next (r/atom nil)
                form-open (r/atom false)
                bio-input (r/atom "")
-               _ (.then (profile/getIconCID pub) #(swap! info assoc :icon_cid % :loaded? true))
-               _ (.then (profile/getUserBio pub) #(swap! info assoc :bio (or % "")))
-               _ (profile/getIsFollowing self pub #(swap! info assoc :is_following %))
-               stop-posts (post/loadPosts pub (sync-posts! posts))]
-    (let [{:keys [loaded? icon_cid bio is_following]} @info]
+               _ (.then (app/profile pub)
+                        (fn [p]
+                          (let [{:keys [picture about]} (js->clj p :keywordize-keys true)]
+                            (swap! info assoc :loaded? true :found? (some? p) :picture picture :about (or about "")))))
+               _ (.then (app/isFollowing pub) #(swap! info assoc :following? %))
+               _ (load-page! posts next pub)
+               stop-posts (watch! posts [pub])]
+    (let [{:keys [loaded? found? picture about following?]} @info]
       (cond
         (not loaded?) [:div]
-        (nil? icon_cid) [user-not-found username]                      ;; every registered user has an avatar
+        (not found?) [user-not-found username]
         :else
         [:div
          [:> Box {:sx {:display "flex"
@@ -71,24 +80,24 @@
                        :align-items "center"}}
           [:> Paper {:variant "outlined"                                   ;; user banner
                      :sx {:min-height 200 :height "auto" :width 850 :mb 2 :display "flex"}}
-           [:> Avatar {:sx {:mx 4 :my 6 :width 100 :height 100}
-                       :src (common/ipfs-url icon_cid)}]
+           [common/avatar {:picture picture :author pub :username username
+                           :sx {:mx 4 :my 6 :width 100 :height 100}}]
            [:> Box {:sx {:my 6 :width 450}}
             [:> Typography {:sx {:font-size "30px"}}
              username]
             [:> Typography {:sx {:font-size "15px" :white-space "break-spaces" :word-wrap "break-word"}}
-             bio]]
+             about]]
            [:> Box {:style {:display "flex" :flex-grow 1 :justify-content "flex-end"}}
             (cond
               (= self pub)                                                                      ;; own profile: edit it
               [:> Button {:sx {:mt 16 :mb 4 :mr 4 :width 140 :height 40 :border-radius 30}
                           :variant "contained"
                           :on-click (fn []
-                                      (reset! bio-input bio)
+                                      (reset! bio-input about)
                                       (reset! form-open true))}
                "Edit Profile"]
 
-              is_following
+              following?
               [:> Box {:sx {:display "flex" :flex-direction "row"}}
                [:> Button {:sx {:mt 16 :mb 4 :mr 2 :width 100 :height 40 :border-radius 30}
                            :variant "contained"
@@ -100,19 +109,20 @@
                [:> Button {:sx {:mt 16 :mb 4 :mr 4 :width 100 :height 40 :border-radius 30}
                            :variant "outlined"
                            :on-click (fn []
-                                       (profile/unfollowUser pub)
-                                       (swap! info assoc :is_following false))}
+                                       (app/unfollow pub)
+                                       (swap! info assoc :following? false))}
                 "Unfollow"]]
 
               :else
               [:> Button {:sx {:mt 16 :mb 4 :mr 4 :width 100 :height 40 :border-radius 30}
                           :variant "contained"
                           :on-click (fn []
-                                      (profile/followUser pub)
-                                      (swap! info assoc :is_following true))}
+                                      (app/follow pub)
+                                      (swap! info assoc :following? true))}
                "Follow"])]]]
 
          [post-list posts]
+         [load-more next #(load-page! posts next pub)]
 
          [:> Dialog {:open @form-open :on-close #(reset! form-open false)}
           [:> DialogTitle {:sx {:display "flex"
@@ -134,33 +144,31 @@
           [:> DialogActions
            [:> Button
             {:on-click (fn []
-                         (profile/updateBio @bio-input)
-                         (swap! info assoc :bio @bio-input)
+                         (app/updateBio @bio-input)
+                         (swap! info assoc :about @bio-input)
                          (reset! form-open false))}
             "Save changes"]]]]))
     (finally
       (stop-posts))))
 
-;; /user/~<pub> names the account directly; its display name comes from the
+;; /user/~<pubkey> names the account directly; its display name comes from the
 ;; account's signed profile.
 (defn- pub-profile-page [pub]
-  (let [alias (r/atom nil)
+  (let [username (r/atom nil)
         loaded? (r/atom false)]
-    (.then (profile/getProfile pub)
-           (fn [js-profile]
-             (reset! alias (:alias (js->clj js-profile :keywordize-keys true)))
+    (.then (app/profile pub)
+           (fn [^js p]
+             (reset! username (some-> p .-username))
              (reset! loaded? true)))
     (fn []
       (cond
         (not @loaded?) [:div]
-        (nil? @alias) [user-not-found (str "~" pub)]
-        :else [loaded-profile-page @alias pub]))))
+        (nil? @username) [user-not-found (str "~" pub)]
+        :else [loaded-profile-page @username pub]))))
 
 (defn- alias-profile-page [username]
-  (let [lookup (r/atom nil)]                                             ;; nil while resolving, then the pubs vector
-    (.then (profile/lookupUser username)
-           (fn [result]
-             (reset! lookup (vec (:pubs (js->clj result :keywordize-keys true))))))
+  (let [lookup (r/atom nil)]                                             ;; nil while resolving, then the pubkeys
+    (.then (app/lookupUser username) #(reset! lookup (vec %)))
     (fn []
       (let [pubs @lookup]
         (cond
@@ -169,7 +177,7 @@
           (= 1 (count pubs)) [loaded-profile-page username (first pubs)]
           :else [user-ambiguous username pubs])))))
 
-;; Aliases are \w{3,20}, so a leading "~" always means a public key.
+;; Usernames are \w{3,20}, so a leading "~" always means a public key.
 (defn profile-page [{{:keys [username]} :path-params}]
   (if (= "~" (first username))
     [pub-profile-page (subs username 1)]

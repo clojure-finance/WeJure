@@ -1,49 +1,61 @@
 (ns wejure.components.mainPage
-  (:require ["../js/post" :as post]
-            ["@mui/icons-material/AddAPhotoSharp$default" :as AddAPhotoSharpIcon]
+  (:require ["@mui/icons-material/AddAPhotoSharp$default" :as AddAPhotoSharpIcon]
             ["@mui/material/Box$default" :as Box]
             ["@mui/material/Button$default" :as Button]
             ["@mui/material/CircularProgress$default" :as CircularProgress]
             ["@mui/material/IconButton$default" :as IconButton]
             ["@mui/material/Typography$default" :as Typography]
+            ["wejure-nostr/app.js" :as app]
             [reagent.core :as r]
-            [wejure.common :as common]
-            [wejure.components.postCard :refer [post-list sync-posts!]]
+            [wejure.components.postCard :refer [add-posts! load-more post-list watch!]]
             [wejure.components.textField :refer [text-field]]))
 
-;; Uploads the image (if any) to IPFS, then stores the post in gunDB. The draft
-;; stays in the composer until the relay has confirmed the post, and stays
-;; there with an error if it does not. The composer remains editable meanwhile,
-;; so a confirmation clears only what was submitted, never a newer draft.
-(defn- submit-post [text image loading error pending]
+;; Uploads the image (if any) to the media servers, then shows the signed post
+;; at once, marked as sending, while it goes to the relays. The draft stays in
+;; the composer until a relay has confirmed the post; if none does, the post is
+;; withdrawn and the draft stays with an error. The composer remains editable
+;; meanwhile, so a confirmation clears only what was submitted.
+(defn- submit-post [posts text image loading error pending]
   (let [submitted-text @text
-        submitted-image @image]
+        ^js submitted-image @image]
     (reset! loading true)
     (reset! error nil)
     (-> (if submitted-image
-          (common/ipfs-add submitted-image)
+          (app/uploadFile submitted-image)
           (js/Promise.resolve nil))
-        (.then (fn [image-cid]
-                 (let [[key saved] (post/storePost (not-empty submitted-text) image-cid)]
-                   (swap! pending conj key)
+        (.then (fn [image-hash]
+                 (app/newPost submitted-text image-hash (some-> submitted-image .-type))))
+        (.then (fn [[js-post saved]]
+                 (let [id (.-id js-post)]
+                   (add-posts! posts #js [js-post])
+                   (swap! pending conj id)
                    (.then saved (fn [err]
-                                  (swap! pending disj key)
+                                  (swap! pending disj id)
                                   (if err
-                                    (reset! error err)
+                                    (do (swap! posts dissoc id)
+                                        (reset! error err))
                                     (do (when (= @text submitted-text) (reset! text ""))
                                         (when (identical? @image submitted-image) (reset! image nil)))))))))
         (.catch (fn [^js err]
                   (reset! error (str "Could not upload the image: " (.-message err)))))
         (.finally #(reset! loading false)))))
 
+(defn- load-page! [posts next]
+  (.then (app/postsPage #js {:until @next})
+         (fn [^js page]
+           (add-posts! posts (.-posts page))
+           (reset! next (.-next page)))))
+
 (defn main-page []
   (r/with-let [posts (r/atom {})
-               pending (r/atom #{})                                          ;; keys of own posts awaiting the relay
+               pending (r/atom #{})                                          ;; ids of own posts awaiting a relay
+               next (r/atom nil)                                             ;; `until` of the next page, nil at the end
                text (r/atom "")
                image (r/atom nil)
                loading (r/atom false)
                error (r/atom nil)
-               stop-feed (post/loadFeed (common/current-pub) (sync-posts! posts))]
+               _ (load-page! posts next)
+               stop-feed (watch! posts nil)]
     [:div
      [:> Box {:sx {:display "flex"                                                ;; components for starting a new post
                    :flex-direction "column"
@@ -95,12 +107,13 @@
           {:variant "contained"
            :disabled (or (and (empty? @text) (nil? @image)) @loading)
            :disable-elevation true
-           :on-click #(submit-post text image loading error pending)}
+           :on-click #(submit-post posts text image loading error pending)}
           "Post"]]]
        (when @error
          [:> Typography {:sx {:mt 2 :color "error.main" :font-size "14px"}}
           @error])]]
 
-     [post-list posts pending]]
+     [post-list posts pending]
+     [load-more next #(load-page! posts next)]]
     (finally
       (stop-feed))))

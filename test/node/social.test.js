@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { crashAll, startAll, wejureServer } from './harness.js';
 import { KIND, createPool, query } from 'wejure-nostr/core.js';
 import { login, profile, register, updateProfile } from 'wejure-nostr/account.js';
-import { block, conversation, feedPage, follow, post, sendDM, unfollow } from 'wejure-nostr/social.js';
+import { block, conversation, feedPage, follow, follows, post, sendDM, unfollow } from 'wejure-nostr/social.js';
 
 const r1 = wejureServer(7121);
 const r2 = wejureServer(7122);
@@ -31,6 +31,15 @@ describe('accounts, feed, blocking and messages', () => {
         assert.equal(phone.pk, alice.pk);
         assert.equal((await profile(phone, alice.pk)).about, 'hi, I am alice');
         await assert.rejects(login(relays, 'alice', 'wrong'), /wrong username or password/);
+    });
+
+    test('changes made right after registering, from another device, are kept', async () => {
+        const fresh = track(await register(relays, 'quick', 'quick-pw'));
+        const phone = track(await login(relays, 'quick', 'quick-pw'));   // same second, different clock state
+        await updateProfile(phone, { about: 'changed at once' });
+        await follow(phone, alice.pk);
+        assert.equal((await profile(fresh, fresh.pk)).about, 'changed at once');
+        assert.ok((await follows(fresh)).includes(alice.pk));
     });
 
     test('two accounts claiming one username each log into their own account', async () => {

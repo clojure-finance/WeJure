@@ -10,13 +10,9 @@ node_modules
 .nrepl-port
 .DS_Store
 
-# GunDB data written by relay.js (see remove_local_gun.sh)
-radata/
-
 # data of the local server (server/index.js)
 data/
 
 # local scratch files
 src/wejure/components/ipfsTest.cljs
 src/wejure/components/testPage.cljs
-src/wejure/js/test.js

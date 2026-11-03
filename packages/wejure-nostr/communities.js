@@ -8,7 +8,7 @@ import { finalizeEvent, generateSecretKey, verifyEvent } from 'nostr-tools/pure'
 import { getConversationKey, v2 as nip44 } from 'nostr-tools/nip44';
 import { wrapEvent } from 'nostr-tools/nip59';
 import { hexToBytes } from 'nostr-tools/utils';
-import { KIND, latest, publish, query, randomHex, sha256Hex, sign } from './core.js';
+import { KIND, after, latest, publish, query, randomHex, sha256Hex, sign } from './core.js';
 import { relaysOf } from './account.js';
 import { unwrapAll } from './social.js';
 import { resolve } from './community-state.js';
@@ -50,25 +50,23 @@ async function openEnvelopes(s, relays, keys, kind) {
 
 const LIST = 'wejure/communities';
 
-async function readList(s) {
-    const e = await latest(s.pool, s.relays, { kinds: [KIND.APP_DATA], authors: [s.pk], '#d': [LIST] });
+const listEvent = (s) => latest(s.pool, s.relays, { kinds: [KIND.APP_DATA], authors: [s.pk], '#d': [LIST] });
+
+function entriesOf(s, e) {
     if (!e) return [];
     try { return JSON.parse(nip44.decrypt(e.content, getConversationKey(s.sk, s.pk))); } catch { return []; }
 }
 
-async function writeList(s, entries) {
-    const content = nip44.encrypt(JSON.stringify(entries), getConversationKey(s.sk, s.pk));
-    await publish(s.pool, s.relays, sign(s, { kind: KIND.APP_DATA, tags: [['d', LIST]], content }));
+const readList = async (s) => entriesOf(s, await listEvent(s));
+
+async function changeList(s, change) {
+    const prev = await listEvent(s);
+    const content = nip44.encrypt(JSON.stringify(change(entriesOf(s, prev))), getConversationKey(s.sk, s.pk));
+    await publish(s.pool, s.relays, sign(s, { kind: KIND.APP_DATA, tags: [['d', LIST]], content, created_at: after(prev) }));
 }
 
-async function remember(s, ref, relays) {
-    const list = (await readList(s)).filter((e) => e.ref !== ref);
-    await writeList(s, [...list, { ref, relays }]);
-}
-
-async function forget(s, ref) {
-    await writeList(s, (await readList(s)).filter((e) => e.ref !== ref));
-}
+const remember = (s, ref, relays) => changeList(s, (list) => [...list.filter((e) => e.ref !== ref), { ref, relays }]);
+const forget = (s, ref) => changeList(s, (list) => list.filter((e) => e.ref !== ref));
 
 // Key bundles addressed to s: ref -> {relays, keys: Map keyId -> {scope, key}}.
 async function bundles(s) {

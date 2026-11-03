@@ -1,7 +1,5 @@
 (ns wejure.components.chatPage
-  (:require ["../js/chat" :as chat]
-            ["@mui/icons-material/Block$default" :as BlockIcon]
-            ["@mui/material/Avatar$default" :as Avatar]
+  (:require ["@mui/icons-material/Block$default" :as BlockIcon]
             ["@mui/material/Box$default" :as Box]
             ["@mui/material/Button$default" :as Button]
             ["@mui/material/Grid$default" :as Grid]
@@ -11,6 +9,7 @@
             ["@mui/material/ListItemText$default" :as ListItemText]
             ["@mui/material/Paper$default" :as Paper]
             ["@mui/material/Typography$default" :as Typography]
+            ["wejure-nostr/app.js" :as app]
             [reagent.core :as r]
             [wejure.common :as common]
             [wejure.components.textField :refer [text-field]]))
@@ -27,73 +26,77 @@
 (defn- scroll-to-bottom []
   (js/setTimeout #(some-> (.getElementById js/document "bottom") (.scrollIntoView)) 100))
 
-(defn- contact-item [{:keys [username last_message_time] icon-cid :avatar} selected? on-select]
+(defn- contact-item [{:keys [pk username picture lastMessage]} selected? on-select]
   [:> ListItemButton
    {:selected selected?
     :on-click on-select}
    [:> ListItemAvatar
-    (if icon-cid
-      [:> Avatar {:src (common/ipfs-url icon-cid) :alt username}]
-      [:> Avatar {:sx {:bgcolor "primary.main"}}
-       (subs username 0 1)])]
+    [common/avatar {:picture picture :author pk :username username}]]
    [:> ListItemText {:primary username}]
-   (when (pos? last_message_time)
+   (when (pos? lastMessage)
      [:> Typography {:variant "body2" :color "textSecondary"}
-      (format-timestamp last_message_time)])])
+      (format-timestamp lastMessage)])])
 
-;; own? comes from whose outbox the message was read from, never from the
-;; message record itself, so a peer cannot pose as "You".
-(defn- message-bubble [{:keys [content timestamp]} own? peer-name]
+;; own? comes from who signed the message inside its encryption (NIP-17), so
+;; a peer cannot pose as "You".
+(defn- message-bubble [{:keys [text time own]} peer-name]
   [:> Box {:sx {:m 1
                 :display "flex"
-                :justify-content (if own? "flex-end" "flex-start")}}
+                :justify-content (if own "flex-end" "flex-start")}}
    [:> Box {:sx {:max-width "70%"
                  :display "flex"
                  :flex-direction "column"
-                 :align-items (if own? "flex-end" "flex-start")}}
+                 :align-items (if own "flex-end" "flex-start")}}
     [:> Typography {:variant "caption" :color "textSecondary" :sx {:mb 0.5}}
-     (if own? "You" peer-name)]
+     (if own "You" peer-name)]
     [:> Box {:sx {:px 2
                   :py 1
                   :border-radius 4
-                  :bgcolor (if own? "primary.light" "grey.100")}}
-     [:> Typography content]]
+                  :bgcolor (if own "primary.light" "grey.100")}}
+     [:> Typography text]]
     [:> Typography {:variant "caption" :color "textSecondary" :sx {:mt 0.5}}
-     (format-timestamp timestamp)]]])
+     (format-timestamp time)]]])
 
 (defn chat-page []
-  (r/with-let [contacts (r/atom [])                                    ;; [{:id :username :avatar :last_message_time}]
-               peer (r/atom nil)                                       ;; {:id :username} of the open conversation
-               messages (r/atom (sorted-map))                          ;; gun time key (ms) -> {:message :own?}
+  (r/with-let [contacts (r/atom [])                                    ;; [{:pk :username :picture :lastMessage}]
+               peer (r/atom nil)                                       ;; {:pk :username} of the open conversation
+               messages (r/atom [])                                    ;; [{:id :own :text :time}], oldest first
                draft (r/atom "")
-               stop-messages (atom (fn []))                            ;; stops the open conversation's subscriptions
+               load-contacts! (fn []
+                                (.then (app/contacts)
+                                       #(reset! contacts (js->clj % :keywordize-keys true))))
+               load-messages! (fn []
+                                (when-let [p @peer]
+                                  (.then (app/conversation (:pk p))
+                                         (fn [ms]
+                                           (when (= p @peer)               ;; still the open conversation
+                                             (reset! messages (js->clj ms :keywordize-keys true))
+                                             (scroll-to-bottom))))))
                close-chat! (fn []
-                             (@stop-messages)
                              (reset! peer nil)
-                             (reset! messages (sorted-map)))
+                             (reset! messages []))
                open-chat! (fn [p]
-                            (close-chat!)
                             (reset! peer p)
-                            (reset! stop-messages
-                                    (chat/displayMessage (:id p)
-                                                         (fn [_ message time-key own?]
-                                                           (swap! messages assoc (js/parseInt time-key)
-                                                                  {:message (js->clj message :keywordize-keys true)
-                                                                   :own? own?})
-                                                           (scroll-to-bottom)))))
+                            (reset! messages [])
+                            (load-messages!))
                send! (fn []
-                       (let [text @draft]
-                         (when (and @peer (seq text))
+                       (let [text @draft
+                             p @peer]
+                         (when (and p (seq text))
                            (reset! draft "")
-                           (.then (chat/storeMessage (:id @peer) text)
+                           (.then (app/sendMessage (:pk p) text)
                                   (fn [err]
-                                    (when err
-                                      (reset! draft text)
-                                      (js/alert err)))))))
-               stop-contacts (chat/init #(reset! contacts (js->clj % :keywordize-keys true)))]
+                                    (if err
+                                      (do (reset! draft text)
+                                          (js/alert err))
+                                      (load-messages!)))))))
+               _ (load-contacts!)
+               stop-inbox (app/watchInbox (fn []                       ;; something new arrived
+                                            (load-contacts!)
+                                            (load-messages!)))]
     (when-let [p (js/sessionStorage.getItem "chat_peer")]                ;; opened from a profile page's "Message" button
       (js/sessionStorage.removeItem "chat_peer")
-      (open-chat! {:id p :username (js/sessionStorage.getItem "chat_peer_name")})
+      (open-chat! {:pk p :username (js/sessionStorage.getItem "chat_peer_name")})
       (js/sessionStorage.removeItem "chat_peer_name"))
     [:div
      [:> Grid {:container true :spacing 2 :sx {:height "100vh"}}
@@ -105,11 +108,11 @@
           [:> Box {:sx {:p 2 :text-align "center"}}
            [:> Typography {:variant "body2" :color "textSecondary"}
             "Follow someone or receive a message to start chatting"]]
-          (let [selected (:id @peer)]                                   ;; deref outside the lazy seq
-            (for [contact (sort-by (juxt (comp - :last_message_time) :username) @contacts)]
-              ^{:key (:id contact)}
-              [contact-item contact (= selected (:id contact))
-               #(open-chat! (select-keys contact [:id :username]))])))]]
+          (let [selected (:pk @peer)]                                   ;; deref outside the lazy seq
+            (for [contact (sort-by (juxt (comp - :lastMessage) :username) @contacts)]
+              ^{:key (:pk contact)}
+              [contact-item contact (= selected (:pk contact))
+               #(open-chat! (select-keys contact [:pk :username]))])))]]
 
       ;; right side: the open conversation
       [:> Grid {:size 9 :sx {:display "flex" :flex-direction "column" :height "100%"}}
@@ -123,16 +126,17 @@
                       :size "small"
                       :start-icon (r/as-element [:> BlockIcon])
                       :on-click (fn []
-                                  (chat/addToBlacklist (:id @peer))
+                                  (app/block (:pk @peer))
                                   (js/alert (str "You have blocked " (:username @peer)))
-                                  (close-chat!))
+                                  (close-chat!)
+                                  (load-contacts!))
                       :sx {:ml "auto"}}
            "Block User"])]
 
        [:> Paper {:sx {:flex-grow 1 :overflow "auto" :p 2}}
         (let [peer-name (:username @peer)]
-          (for [[time-key {:keys [message own?]}] @messages]
-            ^{:key time-key} [message-bubble message own? peer-name]))
+          (for [m @messages]
+            ^{:key (:id m)} [message-bubble m peer-name]))
         [:div {:id "bottom"}]]
 
        [:> Box {:sx {:p 2 :border-top 1 :border-color "divider"}}
@@ -153,5 +157,4 @@
                       :on-click send!}
            "Send"]]]]]]]
     (finally
-      (stop-contacts)
-      (@stop-messages))))
+      (stop-inbox))))

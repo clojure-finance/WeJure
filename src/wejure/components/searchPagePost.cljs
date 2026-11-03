@@ -1,14 +1,14 @@
 (ns wejure.components.searchPagePost
-  (:require ["../js/post" :as post]
-            ["@mui/material/Paper$default" :as Paper]
+  (:require ["@mui/material/Paper$default" :as Paper]
             ["@mui/material/Typography$default" :as Typography]
+            ["wejure-nostr/app.js" :as app]
             [reagent.core :as r]
-            [wejure.common :as common]
-            [wejure.components.postCard :refer [post-list sync-posts!]]))
+            [wejure.components.postCard :refer [add-posts! post-list]]))
 
+;; Searches the recent posts of the people the user follows.
 (defn search-page-post [{{:keys [search-input]} :path-params}]
   (r/with-let [posts (r/atom {})
-               stop-search (post/searchPosts (common/current-pub) search-input (sync-posts! posts))]
+               _ (.then (app/searchPosts search-input) #(add-posts! posts %))]
     [:div
      {:style {:margin "25px 10% 25px 10%"}}
      [:> Typography
@@ -19,6 +19,4 @@
      (if (empty? @posts)
        [:> Paper {:variant "outlined" :sx {:p 2 :mb 2}}
         [:> Typography {:align "center"} "No results found."]]
-       [post-list posts])]
-    (finally
-      (stop-search))))
+       [post-list posts])]))

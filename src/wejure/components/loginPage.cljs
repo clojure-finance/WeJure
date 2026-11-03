@@ -1,21 +1,21 @@
 (ns wejure.components.loginPage
-  (:require ["../js/account" :as acc]
-            ["@mui/material/Box$default" :as Box]
+  (:require ["@mui/material/Box$default" :as Box]
             ["@mui/material/Button$default" :as Button]
             ["@mui/material/CircularProgress$default" :as CircularProgress]
             ["@mui/material/Typography$default" :as Typography]
+            ["wejure-nostr/app.js" :as app]
             [reagent.core :as r]
             [reitit.frontend.easy :as reitit-fe]
             [wejure.components.textField :refer [text-field]]))
 
 (defn- authenticate [name password loading]
   (reset! loading true)
-  (acc/login @name @password
-             (fn [err]
-               (reset! loading false)
-               (if err
-                 (js/alert err)
-                 (set! js/window.location.href (reitit-fe/href :wejure.core/home))))))   ;; full reload starts the session fresh
+  (.then (app/login @name @password)
+         (fn [err]
+           (reset! loading false)
+           (if err
+             (js/alert err)
+             (set! js/window.location.href (reitit-fe/href :wejure.core/home))))))   ;; full reload starts the session fresh
 
 (defn login-page []
   (let [name (r/atom "") password (r/atom "") loading (r/atom false)]

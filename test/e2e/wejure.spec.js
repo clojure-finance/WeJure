@@ -1,5 +1,6 @@
 // Two users, alice and dana, in separate browser contexts, through every page.
 const { test, expect } = require('@playwright/test');
+const relay = require('./relay');
 
 const BASE = 'http://localhost:8020';
 const N = String(Date.now() % 1000000);
@@ -67,32 +68,6 @@ async function expectCaretStays(page, field) {
     await field.fill('');
 }
 
-// The field names of a node as stored on the relay (read by a fresh gun instance
-// without local storage or WebRTC peers), or null if the node is missing.
-async function storedFields(page, path) {
-    return page.evaluate(async (path) => {
-        const gun = window.Gun({ peers: ['http://localhost:8001/gun'], localStorage: false, RTCPeerConnection: false });
-        const node = await new Promise((resolve) => {
-            path.reduce((n, key) => n.get(key), gun).once(resolve);
-            setTimeout(() => resolve(null), 5000);
-        });
-        return node ? Object.keys(node).filter((k) => k !== '_').sort() : null;
-    }, path);
-}
-
-// The public key an alias resolves to in gun's account system.
-async function resolvePub(page, alias) {
-    return page.evaluate(async (alias) => {
-        const gun = window.Gun({ peers: ['http://localhost:8001/gun'], localStorage: false, RTCPeerConnection: false });
-        const node = await new Promise((resolve) => {
-            gun.get('~@' + alias).once(resolve);
-            setTimeout(() => resolve(null), 5000);
-        });
-        const key = node && Object.keys(node).find((k) => k.startsWith('~'));
-        return key ? key.slice(1) : null;
-    }, alias);
-}
-
 test('WeJure end to end', async ({ browser }) => {
     const alice = await newUser(browser, 'alice');
     const dana = await newUser(browser, 'dana');
@@ -108,8 +83,8 @@ test('WeJure end to end', async ({ browser }) => {
         await alice.getByRole('button', { name: 'Edit Profile' }).click();
         await alice.getByLabel('Bio').fill('hi there');
         await alice.getByRole('button', { name: 'Save changes' }).click();
-        await expect(alice.getByText('hi there')).toBeVisible();
-        await alice.waitForTimeout(1000);                                       // let gun flush before navigating
+        await expect(alice.locator('#app').getByText('hi there')).toBeVisible();   // the dialog is outside #app
+        await alice.waitForTimeout(1000);                                       // let the relay store it before navigating
 
         await alice.goto('/home');
         await alice.getByPlaceholder("What's on your mind?").fill('Hello World');
@@ -128,7 +103,7 @@ test('WeJure end to end', async ({ browser }) => {
     await test.step('dana registers and logs in', async () => {
         await dana.getByRole('link', { name: 'Sign Up' }).click();
         await expect(dana).toHaveURL(BASE + '/register');
-        await expect(dana.getByText('4. Upload a profile picture')).toBeVisible();
+        await expect(dana.getByText('4. Upload a profile picture (optional)')).toBeVisible();
         await register(dana, DANA);
         await expect(dana).toHaveURL(BASE + '/login', { timeout: 30000 });
 
@@ -136,14 +111,14 @@ test('WeJure end to end', async ({ browser }) => {
         await expect(dana).toHaveURL(BASE + '/register');
 
         await dana.goto('/login');
-        await expectAlert(dana, 'Wrong user or password.', () => login(dana, DANA, 'wrong-password'));
+        await expectAlert(dana, 'Wrong username or password.', () => login(dana, DANA, 'wrong-password'));
         await expect(dana).toHaveURL(BASE + '/login');
         await login(dana, DANA);
         await expect(dana).toHaveURL(BASE + '/home', { timeout: 30000 });
 
         await expect(dana.getByText(DANA, { exact: true }).first()).toBeVisible();
         const avatar = dana.locator('header img.MuiAvatar-img');
-        await expect(avatar).toHaveAttribute('src', /^http:\/\/localhost:8080\/ipfs\/Qm/);
+        await expect(avatar).toHaveAttribute('src', /^blob:/);                  // fetched and checked against its hash
         await expect.poll(() => avatar.evaluate((img) => img.complete && img.naturalWidth > 0)).toBe(true);
     });
 
@@ -159,7 +134,7 @@ test('WeJure end to end', async ({ browser }) => {
         await dana.getByRole('button', { name: 'Post' }).click();
         await expect(dana.getByText('Hello from dana').first()).toBeVisible();
         await expect.poll(() => dana.evaluate(() => [...document.querySelectorAll('img')]
-            .some((img) => img.src.includes('/ipfs/') && !img.classList.contains('MuiAvatar-img') && img.naturalWidth > 0))).toBe(true);
+            .some((img) => img.src.startsWith('blob:') && !img.classList.contains('MuiAvatar-img') && img.naturalWidth > 0))).toBe(true);
         await expect(composer).toHaveValue('');
         const feed = await dana.locator('#app').innerText();
         expect(feed.indexOf('Hello from dana')).toBeLessThan(feed.indexOf('first post'));    // newest first
@@ -172,7 +147,7 @@ test('WeJure end to end', async ({ browser }) => {
         await search.press('Enter');
         await expect(dana).toHaveURL(BASE + '/search/' + ALICE);
         const hit = dana.locator('div.MuiBox-root', { hasText: ALICE }).last();
-        await expect(hit.locator('img.MuiAvatar-img')).toHaveAttribute('src', /\/ipfs\/Qm/);
+        await expect(hit.locator('img.MuiAvatar-img')).toHaveAttribute('src', /^blob:/);
         await hit.getByRole('link', { name: 'Profile' }).click();
         await expect(dana).toHaveURL(BASE + '/user/' + ALICE);
         await expect(dana.getByText('hi there').first()).toBeVisible();
@@ -218,7 +193,7 @@ test('WeJure end to end', async ({ browser }) => {
         await expect(dana.getByText('second one')).toBeVisible();
         const chat = await dana.locator('#app').innerText();
         expect(chat.indexOf('hi alice, from dana')).toBeLessThan(chat.indexOf('second one'));
-        await expect(contacts.getByText(/^Today /)).toBeVisible();            // the contact's last_message_time
+        await expect(contacts.getByText(/^Today /)).toBeVisible();            // the time of the last message
     });
 
     await test.step('dana edits her profile and deletes a post', async () => {
@@ -227,7 +202,7 @@ test('WeJure end to end', async ({ browser }) => {
         await expectCaretStays(dana, dana.getByLabel('Bio'));
         await dana.getByLabel('Bio').fill("dana's bio");
         await dana.getByRole('button', { name: 'Save changes' }).click();
-        await expect(dana.getByText("dana's bio")).toBeVisible();
+        await expect(dana.locator('#app').getByText("dana's bio")).toBeVisible();
         await dana.waitForTimeout(1000);
 
         const deletes = dana.getByRole('button', { name: 'Delete' });
@@ -240,23 +215,17 @@ test('WeJure end to end', async ({ browser }) => {
         await expect(deletes).toHaveCount(1);
     });
 
-    await test.step('records are stored in user space with their real field names', async () => {
-        const pub = await resolvePub(dana, DANA);
-        expect(pub).toBeTruthy();
-        expect(await storedFields(dana, ['~' + pub, 'profile'])).toEqual(expect.arrayContaining(['alias', 'bio', 'icon_cid']));
-        const postKeys = (await storedFields(dana, ['~' + pub, 'posts'])).filter((key) => /^\d+-/.test(key));
-        expect(postKeys.length).toBeGreaterThan(0);
-        let postFields = null;                                           // one post was deleted; find a live one
-        for (const key of postKeys) {
-            postFields = await storedFields(dana, ['~' + pub, 'posts', key]);
-            if (postFields) break;
-        }
-        expect(postFields).toEqual(expect.arrayContaining(['image', 'text', 'unixtime']));
-        const rooms = (await storedFields(dana, ['~' + pub, 'chats'])).filter((key) => /^[0-9a-f]{64}$/.test(key));
-        expect(rooms).toHaveLength(1);
-        expect(await storedFields(dana, ['~' + pub, 'chats', rooms[0]])).toEqual(expect.arrayContaining(['last_message_time', 'peer']));
+    await test.step('the relay holds signed records, and messages it cannot read', async () => {
+        const pk = await relay.pubkeyOf(DANA);
+        const [profile] = await relay.query({ kinds: [0], authors: [pk] });
+        expect(JSON.parse(profile.content)).toEqual(expect.objectContaining({ name: DANA, about: "dana's bio" }));
+        expect(JSON.parse(profile.content).picture).toMatch(/^[0-9a-f]{64}$/);
+        expect(await relay.postTexts(DANA)).toEqual(['first post']);              // the newer one was deleted
+        const wraps = await relay.query({ kinds: [1059], '#p': [pk] });
+        expect(wraps.length).toBeGreaterThan(0);
+        expect(wraps.every((e) => e.pubkey !== pk && !e.content.includes('second one'))).toBe(true);
 
-        await dana.goto('/user/~' + pub);                                        // the canonical, collision-proof URL
+        await dana.goto('/user/~' + pk);                                         // the canonical, collision-proof URL
         await expect(dana.getByText("dana's bio")).toBeVisible();
         await expect(dana.getByText(DANA, { exact: true }).last()).toBeVisible();
         await dana.goto('/user/~not-a-real-key');

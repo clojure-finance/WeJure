@@ -1,13 +1,19 @@
 // Posts, follows, the feed, blocking and direct messages: all standard Nostr.
 import { getConversationKey, v2 as nip44 } from 'nostr-tools/nip44';
 import { unwrapEvent, wrapEvent } from 'nostr-tools/nip59';
-import { KIND, deletedIds, latest, publish, query, sign } from './core.js';
+import { KIND, after, deletedIds, latest, publish, query, sign } from './core.js';
 import { subscribe } from './live.js';
 
-// A post, optionally with a picture already on Blossom ({sha256, type}).
-export async function post(s, text, media, { created_at } = {}) {
+// A signed post, not yet sent, optionally with a picture already on Blossom ({sha256, type}).
+export function newPost(s, text, media, { created_at } = {}) {
     const tags = media ? [['imeta', `x ${media.sha256}`, `m ${media.type}`]] : [];
-    const event = sign(s, { kind: KIND.POST, content: text, tags, created_at });
+    return sign(s, { kind: KIND.POST, content: text, tags, created_at });
+}
+
+export const publishEvent = (s, event) => publish(s.pool, s.relays, event);
+
+export async function post(s, text, media, opts) {
+    const event = newPost(s, text, media, opts);
     return { event, ...(await publish(s.pool, s.relays, event)) };
 }
 
@@ -17,30 +23,36 @@ export async function deletePost(s, id) {
     return publish(s.pool, s.relays, sign(s, { kind: KIND.DELETION, tags: [['e', id], ['k', '1']] }));
 }
 
-export async function follows(s, pk = s.pk) {
-    const e = await latest(s.pool, s.relays, { kinds: [KIND.FOLLOWS], authors: [pk] });
-    return e ? e.tags.filter((t) => t[0] === 'p').map((t) => t[1]) : [];
-}
+const followsEvent = (s, pk) => latest(s.pool, s.relays, { kinds: [KIND.FOLLOWS], authors: [pk] });
+const followed = (e) => (e ? e.tags.filter((t) => t[0] === 'p').map((t) => t[1]) : []);
 
-async function setFollows(s, pks) {
-    return publish(s.pool, s.relays, sign(s, { kind: KIND.FOLLOWS, tags: [...new Set(pks)].map((p) => ['p', p]) }));
+export const follows = async (s, pk = s.pk) => followed(await followsEvent(s, pk));
+
+async function changeFollows(s, change) {
+    const prev = await followsEvent(s, s.pk);
+    const tags = [...new Set(change(followed(prev)))].map((p) => ['p', p]);
+    return publish(s.pool, s.relays, sign(s, { kind: KIND.FOLLOWS, tags, created_at: after(prev) }));
 }
-export const follow = async (s, pk) => setFollows(s, [...(await follows(s)), pk]);
-export const unfollow = async (s, pk) => setFollows(s, (await follows(s)).filter((p) => p !== pk));
+export const follow = (s, pk) => changeFollows(s, (pks) => [...pks, pk]);
+export const unfollow = (s, pk) => changeFollows(s, (pks) => pks.filter((p) => p !== pk));
 
 // The blocklist is a NIP-51 mute list whose entries are encrypted to the owner,
 // so relays and other users cannot see who blocks whom.
-export async function blocked(s) {
-    const e = await latest(s.pool, s.relays, { kinds: [KIND.MUTE_LIST], authors: [s.pk] });
+const muteEvent = (s) => latest(s.pool, s.relays, { kinds: [KIND.MUTE_LIST], authors: [s.pk] });
+
+function muted(s, e) {
     if (!e || !e.content) return new Set();
     const tags = JSON.parse(nip44.decrypt(e.content, getConversationKey(s.sk, s.pk)));
     return new Set(tags.filter((t) => t[0] === 'p').map((t) => t[1]));
 }
 
+export const blocked = async (s) => muted(s, await muteEvent(s));
+
 export async function block(s, pk) {
-    const list = new Set([...(await blocked(s)), pk]);
+    const prev = await muteEvent(s);
+    const list = new Set([...muted(s, prev), pk]);
     const content = nip44.encrypt(JSON.stringify([...list].map((p) => ['p', p])), getConversationKey(s.sk, s.pk));
-    return publish(s.pool, s.relays, sign(s, { kind: KIND.MUTE_LIST, content }));
+    return publish(s.pool, s.relays, sign(s, { kind: KIND.MUTE_LIST, content, created_at: after(prev) }));
 }
 
 // One page of the feed: the newest posts of the people s follows, older than
@@ -67,7 +79,8 @@ export async function feedPage(s, { until, limit = 10, authors } = {}) {
 // Relays see only "someone sent something to <recipient>". A second copy is
 // wrapped for the sender so their other devices see the conversation too.
 export async function sendDM(s, toPk, text) {
-    const rumor = { kind: KIND.DM, content: text, tags: [['p', toPk]] };
+    // ms orders messages sent within the same second (created_at has seconds only)
+    const rumor = { kind: KIND.DM, content: text, tags: [['p', toPk], ['ms', String(Date.now())]] };
     for (const pk of [toPk, s.pk]) await publish(s.pool, s.relays, wrapEvent(rumor, s.sk, pk));
 }
 
@@ -87,8 +100,9 @@ export async function conversation(s, peerPk) {
     return (await unwrapAll(s))
         .filter((r) => r.kind === KIND.DM)
         .filter((r) => (r.pubkey === peerPk && to(r) === s.pk) || (r.pubkey === s.pk && to(r) === peerPk))
-        .sort((a, b) => a.created_at - b.created_at)
-        .map((r) => ({ from: r.pubkey, text: r.content, at: r.created_at }));
+        .map((r) => ({ id: r.id, from: r.pubkey, text: r.content, at: r.created_at,
+            ms: Number(r.tags.find((t) => t[0] === 'ms')?.[1]) || r.created_at * 1000 }))
+        .sort((a, b) => a.ms - b.ms);
 }
 
 // Live feed: onPost(post) for each new post by authors, onDelete(id, pubkey)

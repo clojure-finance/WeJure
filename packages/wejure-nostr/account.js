@@ -4,7 +4,7 @@
 // As in WeJure, several accounts can claim one username; login tries each claim.
 import { generateSecretKey, getPublicKey } from 'nostr-tools/pure';
 import { decrypt as nip49Decrypt, encrypt as nip49Encrypt } from 'nostr-tools/nip49';
-import { KIND, createPool, latest, publish, query, sign } from './core.js';
+import { KIND, after, createPool, latest, publish, query, sign } from './core.js';
 
 const accountTag = (alias) => `wejure/account/${alias.toLowerCase()}`;
 
@@ -21,7 +21,8 @@ export async function register(relays, alias, password, { mediaServers = [], pic
         { kind: KIND.FOLLOWS, tags: [['p', s.pk]] },   // users follow themselves, as in WeJure
         { kind: KIND.MEDIA_SERVERS, tags: mediaServers.map((u) => ['server', u]) },
     ];
-    for (const t of templates) await publish(s.pool, relays, sign(s, t));
+    const now = Math.floor(Date.now() / 1000);   // all different kinds, so the same time for all
+    for (const t of templates) await publish(s.pool, relays, sign(s, { ...t, created_at: now }));
     return s;
 }
 
@@ -38,14 +39,21 @@ export async function login(relays, alias, password, { mediaServers = [] } = {})
     throw new Error('wrong username or password');
 }
 
+// The accounts claiming a username (usually one; see "Usernames" in the README).
+export async function claimants(pool, relays, alias) {
+    const claims = await query(pool, relays, { kinds: [KIND.APP_DATA], '#d': [accountTag(alias)] });
+    return [...new Set(claims.map((c) => c.pubkey))];
+}
+
 export async function profile(s, pk) {
     const e = await latest(s.pool, s.relays, { kinds: [KIND.PROFILE], authors: [pk] });
     return e ? JSON.parse(e.content) : null;
 }
 
 export async function updateProfile(s, fields) {
-    const current = (await profile(s, s.pk)) ?? {};
-    return publish(s.pool, s.relays, sign(s, { kind: KIND.PROFILE, content: JSON.stringify({ ...current, ...fields }) }));
+    const prev = await latest(s.pool, s.relays, { kinds: [KIND.PROFILE], authors: [s.pk] });
+    const content = JSON.stringify({ ...(prev ? JSON.parse(prev.content) : {}), ...fields });
+    return publish(s.pool, s.relays, sign(s, { kind: KIND.PROFILE, content, created_at: after(prev) }));
 }
 
 // The relays a user writes to (NIP-65), read from whatever relays we know.

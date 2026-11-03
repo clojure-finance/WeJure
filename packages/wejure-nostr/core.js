@@ -34,6 +34,10 @@ export function sign(s, template) {
     return finalizeEvent({ tags: [], content: '', ...template, created_at }, s.sk);
 }
 
+// created_at for a new version of a replaceable event: now, but always after
+// prev (the version it replaces), whichever clock dated that one.
+export const after = (prev) => Math.max(Math.floor(Date.now() / 1000), (prev?.created_at ?? 0) + 1);
+
 // Sends event to every relay. Resolves with which relays stored it once at least
 // minAcks did; rejects otherwise. A relay that is down simply counts as failed.
 export async function publish(pool, relays, event, { minAcks = 1, maxWait = 3000 } = {}) {

@@ -1,38 +1,47 @@
 (ns wejure.common
-  "Session and IPFS helpers shared by the pages.")
+  "Session and media helpers shared by the pages."
+  (:require ["@mui/material/Avatar$default" :as Avatar]
+            ["wejure-nostr/app.js" :as app]
+            [reagent.core :as r]))
 
-;; The login session lives in sessionStorage: "username", "pub", "icon_cid",
-;; and the key pair "pair" stored by gun's user.recall (see js/db.js).
-
-(defn current-username []
-  (js/sessionStorage.getItem "username"))
-
-(defn current-pub []
-  (js/sessionStorage.getItem "pub"))
+;; The session lives in the data layer (wejure-nostr/session.js keeps it in
+;; sessionStorage, so a reload stays logged in).
 
 (defn logged-in? []
-  (some? (js/sessionStorage.getItem "pair")))
+  (app/loggedIn))
 
-;; IPFS runs locally: the HTTP API on port 5001 for uploads, the gateway on 8080
-;; for reading files back.
+(defn- me []
+  (js->clj (app/me) :keywordize-keys true))
 
-(def ^:private ipfs-api "http://127.0.0.1:5001/api/v0/add")
-(def ^:private ipfs-gateway "http://localhost:8080/ipfs/")
+(defn current-username []
+  (:username (me)))
 
-(defn ipfs-url
-  "Gateway URL of a CID, or nil when there is no CID."
-  [cid]
-  (when (seq cid)
-    (str ipfs-gateway cid)))
+(defn current-pub []
+  (:pk (me)))
 
-(defn ipfs-add
-  "Uploads a js/File to IPFS. Returns a promise of its CID."
-  [^js file]
-  (let [form-data (js/FormData.)]
-    (.append form-data "file" file (.-name file))
-    (-> (js/fetch ipfs-api #js {:method "POST" :body form-data})
-        (.then (fn [^js response]
-                 (if (.-ok response)
-                   (.json response)
-                   (throw (js/Error. (str "IPFS upload failed: HTTP " (.-status response)))))))
-        (.then (fn [^js data] (.-Hash data))))))
+(defn current-picture []
+  (:picture (me)))
+
+(defn- media-url
+  "An atom that receives the browser URL of the file with hash sha256 once it is
+  fetched and checked (nil until then, or if no server has it)."
+  [sha256 author]
+  (let [url (r/atom nil)]
+    (when (seq sha256)
+      (.then (app/mediaUrl sha256 author) #(reset! url %)))
+    url))
+
+(defn avatar
+  "A user's picture (a Blossom hash), or the first letter of their name."
+  [{:keys [picture author username sx]}]
+  (r/with-let [url (media-url picture author)]
+    [:> Avatar {:sx sx :src @url :alt username}
+     (when (and (nil? @url) (seq username))
+       (.toUpperCase (subs username 0 1)))]))
+
+(defn media-image
+  "The picture with hash sha256, shown once it has loaded."
+  [{:keys [sha256 author style]}]
+  (r/with-let [url (media-url sha256 author)]
+    (when @url
+      [:img {:style style :src @url}])))
