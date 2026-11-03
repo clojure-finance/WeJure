@@ -34,7 +34,8 @@
   [:> Paper {:variant "outlined" :sx {:width 850 :my 1}}
    [:> Box {:sx {:display "flex" :justify-content "space-between" :box-shadow 3}}
     [:> Box {:sx {:my 1 :display "flex"}}
-     [:a {:href (reitit-fe/href :wejure.core/user {:username username})}
+     [:a {:href (reitit-fe/href :wejure.core/user {:username username})
+          :style {:text-decoration "none"}}
       [common/avatar {:picture picture :author author :username username
                       :sx {:mx 2 :my 1 :width 36 :height 36}}]]
      [:> Typography {:sx {:my 1 :font-size "20px"}}
