@@ -18,6 +18,9 @@ export class SqliteEventStore extends EventRepository {
         this.db = new DatabaseSync(file);
         this.db.exec(`
             PRAGMA journal_mode = WAL;
+            -- no disk flush on every write; with WAL a crashed process loses
+            -- nothing, a power cut at most the last writes (4x faster writes)
+            PRAGMA synchronous = NORMAL;
             CREATE TABLE IF NOT EXISTS events (
                 id TEXT PRIMARY KEY, pubkey TEXT NOT NULL, created_at INTEGER NOT NULL,
                 kind INTEGER NOT NULL, tags TEXT NOT NULL, content TEXT NOT NULL, sig TEXT NOT NULL,
