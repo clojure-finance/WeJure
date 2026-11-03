@@ -6,6 +6,37 @@ const { member: MEMBER, moderator: MOD, admin: ADMIN, owner: OWNER } = ROLE;
 
 const cmp = (a, b) => a.created_at - b.created_at || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
 
+// A binary heap, smallest first by cmp.
+function heap(cmp) {
+    const a = [];
+    const swap = (i, j) => { [a[i], a[j]] = [a[j], a[i]]; };
+    return {
+        get size() { return a.length; },
+        push(x) {
+            a.push(x);
+            for (let i = a.length - 1; i > 0 && cmp(a[i], a[(i - 1) >> 1]) < 0; i = (i - 1) >> 1) swap(i, (i - 1) >> 1);
+        },
+        pop() {
+            const top = a[0];
+            const last = a.pop();
+            if (a.length) {
+                a[0] = last;
+                for (let i = 0; ;) {
+                    const l = 2 * i + 1;
+                    const r = l + 1;
+                    let m = i;
+                    if (l < a.length && cmp(a[l], a[m]) < 0) m = l;
+                    if (r < a.length && cmp(a[r], a[m]) < 0) m = r;
+                    if (m === i) break;
+                    swap(i, m);
+                    i = m;
+                }
+            }
+            return top;
+        },
+    };
+}
+
 // Topological order of the ops that descend from genesis and whose parents are
 // all known. Among ops ready at the same time, the smallest (created_at, id) goes first.
 function topoOrder(byId, genesis) {
@@ -20,10 +51,10 @@ function topoOrder(byId, genesis) {
         }
     }
     const out = [];
-    const ready = [genesis];
-    while (ready.length) {
-        ready.sort(cmp);
-        const op = ready.shift();
+    const ready = heap(cmp);
+    ready.push(genesis);
+    while (ready.size) {
+        const op = ready.pop();
         out.push(op);
         for (const k of kids.get(op.id) ?? []) {
             if (!indeg.has(k.id)) continue;
@@ -32,6 +63,53 @@ function topoOrder(byId, genesis) {
         }
     }
     return out;
+}
+
+// Answers "is op a an ancestor of op b?" for ops in topological order.
+// Storing every op's ancestors grows with the square of the log (5000 ops took
+// 500 MB), so this keeps, per op, its latest cut instead: an op that every op
+// before it in the order leads to. In a log written one op at a time, every op
+// is a cut and the answer is a comparison of positions; ops written
+// concurrently need a search, but only back to their cut.
+function ancestry(ordered) {
+    const index = new Map();
+    const parents = new Map();
+    const cut = new Map();   // op id -> position of its latest cut (itself, or an ancestor)
+    const heads = new Set();   // ops without a child so far
+    ordered.forEach((op, i) => {
+        index.set(op.id, i);
+        parents.set(op.id, op.parents);
+        op.parents.forEach((p) => heads.delete(p));
+        heads.add(op.id);
+        // every earlier op leads to some head, so with one head they all lead to op
+        cut.set(op.id, heads.size === 1 ? i : Math.max(...op.parents.map((p) => cut.get(p))));
+    });
+    const recent = new Map();   // op id -> its ancestors after its cut (filled on demand)
+    const ancestorsAfterCut = (b) => {
+        if (!recent.has(b)) {
+            const floor = cut.get(b);
+            const set = new Set();
+            const stack = [...parents.get(b)];
+            while (stack.length) {
+                const p = stack.pop();
+                if (set.has(p) || index.get(p) <= floor) continue;
+                set.add(p);
+                stack.push(...parents.get(p));
+            }
+            recent.set(b, set);
+        }
+        return recent.get(b);
+    };
+    return {
+        has: (id) => index.has(id),
+        isAncestor(a, b) {
+            const ia = index.get(a);
+            const ib = index.get(b);
+            if (ia === undefined || ib === undefined || ia >= ib) return false;
+            // a is b's cut or comes before it, so a leads to the cut, and the cut to b
+            return ia <= cut.get(b) || ancestorsAfterCut(b).has(a);
+        },
+    };
 }
 
 function newState(ref, founder) {
@@ -57,7 +135,7 @@ const push = (map, key, value) => (map.get(key) ?? map.set(key, []).get(key)).pu
 
 // One pass over the ordered ops. `caps` holds the revocations found by the
 // previous pass: pubkey -> [{id, roleAfter}].
-function replay(ref, founder, ordered, anc, caps) {
+function replay(ref, founder, ordered, dag, caps) {
     const S = newState(ref, founder);
     const revocations = new Map();
     const valid = new Set();
@@ -260,7 +338,7 @@ function replay(ref, founder, ordered, anc, caps) {
         // The actor's role, lowered by every revocation of them this op is concurrent with.
         let role = rank(op.pubkey);
         for (const rev of caps.get(op.pubkey) ?? []) {
-            if (rev.id !== op.id && !anc.get(rev.id)?.has(op.id) && !anc.get(op.id).has(rev.id)) role = Math.min(role, rev.roleAfter);
+            if (rev.id !== op.id && !dag.isAncestor(op.id, rev.id) && !dag.isAncestor(rev.id, op.id)) role = Math.min(role, rev.roleAfter);
         }
         // apply() checks everything before changing anything, so an invalid op leaves no trace
         let ok = false;
@@ -290,18 +368,13 @@ export function resolve(ref, events) {
     if (!genesis) return null;
 
     const ordered = topoOrder(byId, genesis);
-    const anc = new Map();
-    for (const op of ordered) {
-        const set = new Set();
-        for (const p of op.parents) { set.add(p); anc.get(p).forEach((a) => set.add(a)); }
-        anc.set(op.id, set);
-    }
+    const dag = ancestry(ordered);
 
     // Replay until the revocations stop changing (see "Computing the state").
     let caps = new Map();
     let result;
     for (let pass = 0; pass < 12; pass++) {
-        result = replay(ref, founder, ordered, anc, caps);
+        result = replay(ref, founder, ordered, dag, caps);
         if (revKey(result.revocations) === revKey(caps)) break;
         if (pass >= 10) {
             for (const [pk, v] of result.revocations) caps.set(pk, [...(caps.get(pk) ?? []), ...v]);
@@ -312,7 +385,7 @@ export function resolve(ref, events) {
     const { S, valid } = result;
     const hasChild = new Set(ordered.flatMap((o) => o.parents));
     return withHelpers(S, {
-        order: ordered, anc, valid,
+        order: ordered, isAncestor: dag.isAncestor, inOrder: dag.has, valid,
         heads: ordered.filter((o) => !hasChild.has(o.id)).map((o) => o.id),
     });
 }
@@ -337,7 +410,7 @@ function withHelpers(S, extra) {
         if (!k) return true;
         const ch = scope === 'state' ? null : channel(scope.slice(3));
         const triggers = [...(S.reductions.get(scope) ?? []), ...(ch?.history === 'from-join' ? S.additions.get(scope) ?? [] : [])];
-        return triggers.some((d) => d !== k.id && !extra.anc.get(k.id).has(d));
+        return triggers.some((d) => d !== k.id && !extra.isAncestor(d, k.id));
     };
     const everIn = (id, pk) => {
         const ch = channel(id);
@@ -347,11 +420,10 @@ function withHelpers(S, extra) {
     // message naming `at` was written after they joined. With latest, only their
     // most recent joining counts (for members who left and were brought back).
     const joinedBy = (id, pk, at, { latest = false } = {}) => {
-        const seen = extra.anc.get(at);
-        if (!seen) return false;
+        if (!extra.inOrder(at)) return false;
         const by = (key) => {
             const adds = S.addedBy.get(key) ?? [];
-            return (latest ? adds.slice(-1) : adds).some((a) => a === at || seen.has(a));
+            return (latest ? adds.slice(-1) : adds).some((a) => a === at || extra.isAncestor(a, at));
         };
         return by(`${pk}|state`) && (channel(id)?.visibility !== 'private' || by(`${pk}|ch:${id}`));
     };

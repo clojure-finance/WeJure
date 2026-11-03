@@ -142,4 +142,26 @@ describe('community rules', () => {
         assert.ok(!s.isMember(stranger.pk));
         assert.equal(s.order.length, 2, 'the orphan waits for its parent');
     });
+
+    test('ancestry answers match a full search, on a history with forks and late merges', () => {
+        const { f, ref, op, genesis } = community();
+        const ops = [genesis];
+        for (let i = 0; i < 120; i++) {
+            // mostly one op at a time; sometimes a fork from an old op, or a merge of several heads
+            const from = Math.random() < 0.15 ? ops : ops.slice(-3);
+            const parents = [...new Set([0, 1, 2].slice(0, 1 + Math.floor(Math.random() * 3)).map(() => from[Math.floor(Math.random() * from.length)]))];
+            ops.push(op(f, { type: 'hide', message: `m${i}` }, parents, clock + Math.floor(Math.random() * 50)));
+        }
+        const s = resolve(ref, ops);
+        const parentsOf = new Map(s.order.map((o) => [o.id, o.parents]));
+        const ancestors = (id, out = new Set()) => {
+            for (const p of parentsOf.get(id)) if (!out.has(p)) { out.add(p); ancestors(p, out); }
+            return out;
+        };
+        for (const b of s.order) {
+            const all = ancestors(b.id);
+            for (const a of s.order) assert.equal(s.isAncestor(a.id, b.id), all.has(a.id));
+        }
+    });
+
 });
