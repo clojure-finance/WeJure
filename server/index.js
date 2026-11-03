@@ -43,7 +43,7 @@ function serveApp(req, res) {
     const pub = path.resolve(opts.public);
     const { pathname } = new URL(req.url, 'http://x');
     let file = path.join(pub, decodeURIComponent(pathname));
-    if (!file.startsWith(pub)) { res.writeHead(403); res.end(); return; }
+    if (file !== pub && !file.startsWith(pub + path.sep)) { res.writeHead(403); res.end(); return; }
     if (!fs.existsSync(file) || fs.statSync(file).isDirectory()) {
         if (path.extname(pathname)) { res.writeHead(404); res.end('not found'); return; }
         file = path.join(pub, 'index.html');

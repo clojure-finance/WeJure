@@ -62,5 +62,12 @@ export async function fetchBlob(sha256, servers) {
 // The media servers a user publishes their files to (BUD-03).
 export async function mediaServersOf(s, pk) {
     const e = await latest(s.pool, s.relays, { kinds: [KIND.MEDIA_SERVERS], authors: [pk] });
-    return e ? e.tags.filter((t) => t[0] === 'server').map((t) => t[1]) : [];
+    return e ? httpUrls(e.tags.filter((t) => t[0] === 'server').map((t) => t[1])) : [];
+}
+
+// The entries of a server list that are http(s) URLs (lists come from other people).
+export function httpUrls(list) {
+    return list.filter((u) => {
+        try { return ['http:', 'https:'].includes(new URL(u).protocol); } catch { return false; }
+    });
 }

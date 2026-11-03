@@ -27,14 +27,17 @@
                                      (swap! posts dissoc id)))}))
 
 (defn- delete-post! [posts {:keys [id]}]
-  (app/deletePost id)
-  (swap! posts dissoc id))
+  (.then (app/deletePost id)
+         (fn [err]
+           (if err
+             (js/alert (str "The post was not deleted: " err))
+             (swap! posts dissoc id)))))
 
 (defn- post-card [posts pending? {:keys [author username time text image picture] :as p}]
   [:> Paper {:variant "outlined" :sx {:width 850 :my 1}}
    [:> Box {:sx {:display "flex" :justify-content "space-between" :box-shadow 3}}
     [:> Box {:sx {:my 1 :display "flex"}}
-     [:a {:href (reitit-fe/href :wejure.core/user {:username username})
+     [:a {:href (reitit-fe/href :wejure.core/user {:username (str "~" author)})   ;; the account, not a name anyone can claim
           :style {:text-decoration "none"}}
       [common/avatar {:picture picture :author author :username username
                       :sx {:mx 2 :my 1 :width 36 :height 36}}]]

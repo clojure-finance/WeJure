@@ -60,13 +60,13 @@
      mine [:> Button {:size "small" :on-click #(act! (app/retractMessage ref id))} "Delete"]
      canHide [:> Button {:size "small" :on-click #(act! (app/hideMessage ref id))} "Hide"])])
 
-(defn- not-a-member [{:keys [ref name description mode]} on-joined]
+(defn- not-a-member [{:keys [ref name description join]} on-joined]
   (r/with-let [error (r/atom nil)]
     [:> Box {:sx {:display "flex" :justify-content "center" :mt 6}}
      [:> Paper {:variant "outlined" :sx {:p 4 :width 500}}
       [:> Typography {:variant "h5" :gutter-bottom true} name]
       [:> Typography {:sx {:mb 2}} description]
-      (if (= mode "open")
+      (if (= join "open")                                                ;; only open communities have "open"
         [:> Button {:variant "contained"
                     :on-click #(.then (app/joinCommunity ref)
                                       (fn [err] (if err (reset! error err) (on-joined))))}
@@ -119,13 +119,14 @@
                                             (load!))))
                send! (fn []
                        (let [text @draft
+                             c @channel
                              t (or (not-empty @topic) @new-topic)]
                          (reset! draft "")
-                         (.then (app/sendCommunityMessage ref @channel t text)
+                         (.then (app/sendCommunityMessage ref c t text)
                                 (fn [err]
-                                  (if err
-                                    (do (reset! draft text) (reset! error err))
-                                    (do (reset! topic t) (load-channel!)))))))
+                                  (cond
+                                    err (do (reset! draft text) (reset! error err))
+                                    (= c @channel) (do (reset! topic t) (load-channel!)))))))
                _ (load!)
                stop (app/watchCommunity ref load!)]
     (let [v @view]
@@ -160,8 +161,9 @@
            [:> Box {:sx {:flex-grow 1 :overflow "auto"}}
             (if (empty? @messages)
               [:> Typography {:color "textSecondary" :sx {:p 2}} "No messages yet. Start a topic below."]
-              (for [m @messages]
-                ^{:key (:id m)} [message-row ref m (nil? @topic) act!]))]
+              (let [all-topics? (nil? @topic)]                           ;; deref outside the lazy seq
+                (for [m @messages]
+                  ^{:key (:id m)} [message-row ref m all-topics? act!])))]
            (when @channel
              [:> Box {:sx {:display "flex" :gap 1 :p 1 :border-top 1 :border-color "divider"}}
               (when (nil? @topic)

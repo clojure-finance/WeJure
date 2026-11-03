@@ -6,6 +6,7 @@ import { crashAll, startAll, wejureServer } from './harness.js';
 import { finalizeEvent, generateSecretKey } from 'nostr-tools/pure';
 import { v2 as nip44 } from 'nostr-tools/nip44';
 import { hexToBytes } from 'nostr-tools/utils';
+import { wrapEvent } from 'nostr-tools/nip59';
 import { KIND, createPool, publish, query, sha256Hex, sign } from 'wejure-nostr/core.js';
 import { login, register } from 'wejure-nostr/account.js';
 import * as C from 'wejure-nostr/communities.js';
@@ -110,6 +111,7 @@ describe('communities', () => {
         await C.sendMessage(d, general, 'chat', 'hello all');
         await C.hideMessage(c, rude);
         await C.retractMessage(d, typo);
+        await C.retractMessage(c, typo);                                    // someone else's retraction neither counts nor undoes it
         await assert.rejects(C.hideMessage(d, typo), /not allowed/);
         await C.refresh(b);
         assert.deepEqual(texts(await C.readChannel(b, general)), ['hello all']);
@@ -181,6 +183,12 @@ describe('communities', () => {
         assert.ok(b.state.order.some((o) => o.id === kick.id), 'bob can read the forged op');
         assert.ok(b.state.isMember(bob.pk), 'but it does not count');
         assert.deepEqual(texts(await C.readChannel(b, general)), ['I liked it', 'mallory is gone']);
+
+        // brought back, her new messages count; what she forged while away still does not
+        await C.addMember(club, mallory.pk);
+        const back = await enter(mallory, club.ref);
+        await C.sendMessage(back, general, 'books', 'back again');
+        assert.deepEqual(texts(await C.readChannel(b, general)), ['I liked it', 'mallory is gone', 'back again']);
     });
 
     test('leaving: the others get a new key automatically and carry on', async () => {
@@ -223,6 +231,15 @@ describe('communities', () => {
         await publish(mallory.pool, relays, spam);
         await assert.rejects(C.join(mallory, club.ref, relays), /not allowed/);
         assert.deepEqual(texts(await C.readChannel(club, general)), ['hi, I am dave', 'hello (spam soon)']);
+
+        // a stranger's bundle with broken relay addresses does not stop dave's client
+        const junk = { kind: KIND.KEY_BUNDLE, content: JSON.stringify({ ref: club.ref, relays: [123, 'http://[', 'wss://'], keys: [] }) };
+        await publish(mallory.pool, relays, wrapEvent(junk, mallory.sk, dave.pk));
+        assert.equal((await C.openCommunity(dave, club.ref)).state.name, 'Clojure Users');
+
+        // adding someone to an open community tells them (it has no keys to send)
+        await C.addMember(club, erin.pk);
+        assert.ok((await C.myCommunities(erin)).invitations.some((i) => i.ref === club.ref));
 
         const staff = await C.createChannel(club, { name: 'staff', visibility: 'private', members: [dave.pk] });
         await C.refresh(d);

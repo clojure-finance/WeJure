@@ -83,7 +83,12 @@ function createCache(s) {
         await new Promise((resolve) => { tx.oncomplete = resolve; tx.onerror = resolve; tx.onabort = resolve; });
     }
 
-    return { getMany, setMany };
+    // Closes the database (it cannot be deleted while open).
+    async function close() {
+        (await persistent)?.db.close();
+    }
+
+    return { getMany, setMany, close };
 }
 
 // The cache of session s (created on first use).
@@ -109,7 +114,10 @@ export async function decryptAll(s, events, decrypt) {
     return out;
 }
 
-// Deletes the account's cache database (on logout).
-export function forgetCache(pk) {
-    try { globalThis.indexedDB?.deleteDatabase(dbName(pk)); } catch { /* nothing to delete */ }
+// Deletes the cache database of session s (on logout).
+export async function forgetCache(s) {
+    try {
+        await s.cache?.close();
+        globalThis.indexedDB?.deleteDatabase(dbName(s.pk));
+    } catch { /* nothing to delete */ }
 }

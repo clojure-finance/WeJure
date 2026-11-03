@@ -23,31 +23,38 @@ function reply(res, status, body, headers = {}) {
 
 const refuse = (res, status, reason) => reply(res, status, { message: reason }, { 'X-Reason': reason });
 
-async function readBody(req) {
+// The bytes of a request or response body, up to MAX_SIZE.
+async function readBody(stream) {
     const chunks = [];
     let size = 0;
-    for await (const c of req) {
+    for await (const c of stream) {
         size += c.length;
         if (size > MAX_SIZE) throw new Error('file too large');
-        chunks.push(c);
+        chunks.push(Buffer.from(c));
     }
     return Buffer.concat(chunks);
 }
 
-// The upload authorization in the request, or a reason it is not acceptable.
-function authorize(req, sha256) {
+// The upload authorization in the request (checked before any body is read or
+// anything fetched): {hashes} it allows, or {problem}.
+function authorization(req) {
     const header = req.headers.authorization ?? '';
-    if (!header.startsWith('Nostr ')) return 'missing authorization';
+    if (!header.startsWith('Nostr ')) return { problem: 'missing authorization' };
     let e;
-    try { e = JSON.parse(Buffer.from(header.slice(6), 'base64').toString()); } catch { return 'malformed authorization'; }
-    const tag = (n) => e.tags?.filter((t) => t[0] === n).map((t) => t[1]) ?? [];
+    try { e = JSON.parse(Buffer.from(header.slice(6), 'base64').toString()); } catch { return { problem: 'malformed authorization' }; }
+    if (!e || !verifyEvent(e) || e.kind !== 24242) return { problem: 'invalid authorization' };
+    const tag = (n) => e.tags.filter((t) => t[0] === n).map((t) => t[1]);
     const now = Math.floor(Date.now() / 1000);
-    if (!verifyEvent(e) || e.kind !== 24242) return 'invalid authorization';
-    if (!tag('t').includes('upload')) return 'authorization is not for uploads';
-    if (!(Number(tag('expiration')[0]) > now) || e.created_at > now + 60) return 'authorization expired';
-    if (!tag('x').includes(sha256)) return 'authorization is for a different file';
-    return null;
+    if (!tag('t').includes('upload')) return { problem: 'authorization is not for uploads' };
+    if (!(Number(tag('expiration')[0]) > now) || e.created_at > now + 60) return { problem: 'authorization expired' };
+    if (!tag('x').length) return { problem: 'authorization names no file' };
+    return { hashes: tag('x') };
 }
+
+// Pictures, audio and video are served as what they are. Anything else (HTML,
+// SVG, scripts) is served as a download in a sandbox: this server shares its
+// origin with the app, so an uploaded page must never run as the app.
+const MEDIA = /^(image\/(png|jpeg|gif|webp|avif)|audio\/[\w.+-]+|video\/[\w.+-]+)$/;
 
 export function createBlossom(dir, publicUrl) {
     fs.mkdirSync(dir, { recursive: true });
@@ -77,17 +84,24 @@ export function createBlossom(dir, publicUrl) {
             const sha256 = blob[1];
             if (!fs.existsSync(file(sha256))) { refuse(res, 404, 'not found'); return true; }
             const m = JSON.parse(fs.readFileSync(meta(sha256)));
-            res.writeHead(200, { ...cors, 'Content-Type': m.type || 'application/octet-stream', 'Content-Length': m.size,
-                'Cache-Control': 'public, max-age=31536000, immutable' });
+            const media = MEDIA.test(m.type ?? '');
+            res.writeHead(200, {
+                ...cors, 'Content-Length': m.size, 'Cache-Control': 'public, max-age=31536000, immutable',
+                'Content-Type': media ? m.type : 'application/octet-stream',
+                'X-Content-Type-Options': 'nosniff',
+                'Content-Security-Policy': "sandbox; default-src 'none'",
+                ...(media ? {} : { 'Content-Disposition': `attachment; filename="${sha256}"` }),
+            });
             if (req.method === 'HEAD') res.end(); else fs.createReadStream(file(sha256)).pipe(res);
             return true;
         }
         if (req.method === 'PUT' && url.pathname === '/upload') {
+            const { hashes, problem } = authorization(req);
+            if (problem) { refuse(res, 401, problem); return true; }
             let bytes;
             try { bytes = await readBody(req); } catch (e) { refuse(res, 413, e.message); return true; }
             const sha256 = crypto.createHash('sha256').update(bytes).digest('hex');
-            const problem = authorize(req, sha256);
-            if (problem) { refuse(res, 401, problem); return true; }
+            if (!hashes.includes(sha256)) { refuse(res, 401, 'authorization is for a different file'); return true; }
             reply(res, 200, store(bytes, req.headers['content-type'] ?? 'application/octet-stream', req));
             return true;
         }
@@ -95,18 +109,20 @@ export function createBlossom(dir, publicUrl) {
             // Copies a file from another server. Only http(s), and the bytes must
             // match the hash the authorization names. (A public deployment should
             // also refuse addresses in private networks.)
+            const { hashes, problem } = authorization(req);
+            if (problem) { refuse(res, 401, problem); return true; }
             let source;
             try { source = new URL(JSON.parse((await readBody(req)).toString()).url); } catch { refuse(res, 400, 'expected {"url": ...}'); return true; }
             if (!['http:', 'https:'].includes(source.protocol)) { refuse(res, 400, 'only http(s) sources'); return true; }
             let fetched;
+            let bytes;
             try {
                 fetched = await fetch(source, { signal: AbortSignal.timeout(10000) });
                 if (!fetched.ok) throw new Error(`source answered ${fetched.status}`);
+                bytes = await readBody(fetched.body);
             } catch (e) { refuse(res, 502, `could not fetch the source: ${e.message}`); return true; }
-            const bytes = Buffer.from(await fetched.arrayBuffer());
             const sha256 = crypto.createHash('sha256').update(bytes).digest('hex');
-            const problem = authorize(req, sha256);
-            if (problem) { refuse(res, 401, problem); return true; }
+            if (!hashes.includes(sha256)) { refuse(res, 401, 'authorization is for a different file'); return true; }
             reply(res, 200, store(bytes, fetched.headers.get('content-type') ?? 'application/octet-stream', req));
             return true;
         }

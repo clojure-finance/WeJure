@@ -121,6 +121,17 @@ describe('community rules', () => {
         assert.ok(!s.needsRekey('state'));
     });
 
+    test('malformed or incomplete ops are refused without breaking the state', () => {
+        const { f, ref, op, genesis } = community('private');
+        const odd = op(f, { type: 'channel-create', channel: 'x', visibility: 'private', members: 5, keyId: 'k1' }, [genesis]);
+        const keyless = op(f, { type: 'channel-create', channel: 'y', name: 'no key' }, [odd]);   // private: needs a keyId
+        const badScope = op(f, { type: 'rekey', scope: 'zzx', keyId: 'k2' }, [keyless]);
+        const s = resolve(ref, [genesis, odd, keyless, badScope]);
+        assert.deepEqual([...s.channel('x').members], [f.pk], 'a members field that is not a list is ignored');
+        assert.ok(!s.channels.has('y'), 'a refused channel-create leaves no channel behind');
+        assert.ok(!s.valid.has(badScope.id));
+    });
+
     test('ops from strangers, with unknown parents, or for another community are ignored', () => {
         const { f, ref, op, genesis } = community();
         const stranger = person();

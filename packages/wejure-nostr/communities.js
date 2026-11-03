@@ -8,7 +8,7 @@ import { finalizeEvent, generateSecretKey } from 'nostr-tools/pure';
 import { getConversationKey, v2 as nip44 } from 'nostr-tools/nip44';
 import { wrapEvent } from 'nostr-tools/nip59';
 import { hexToBytes } from 'nostr-tools/utils';
-import { KIND, after, checkEvent, latest, publish, query, randomHex, sha256Hex, sign } from './core.js';
+import { KIND, after, checkEvent, latest, publish, query, randomHex, relayUrls, sha256Hex, sign } from './core.js';
 import { decryptAll } from './cache.js';
 import { relaysOf } from './account.js';
 import { unwrapAll } from './social.js';
@@ -20,7 +20,7 @@ const utf8 = (s) => new TextEncoder().encode(s);
 // different hashes, so knowing an id does not reveal where the messages are.
 const keyIdOf = (key) => sha256Hex(utf8(`wejure-key-id:${key}`));
 const tagOf = (key) => sha256Hex(utf8(`wejure-envelope:${key}`));
-const union = (...lists) => [...new Set(lists.flat().filter(Boolean))];
+const union = (...lists) => relayUrls(lists.flat());   // relay lists, cleaned (they come from other people)
 
 async function envelope(key, inner) {
     return finalizeEvent({
@@ -74,12 +74,14 @@ async function bundles(s) {
         if (r.kind !== KIND.KEY_BUNDLE) continue;
         let b;
         try { b = JSON.parse(r.content); } catch { continue; }
-        if (typeof b.ref !== 'string' || !Array.isArray(b.keys)) continue;
+        if (!b || typeof b.ref !== 'string' || !Array.isArray(b.keys)) continue;
         const entry = out.get(b.ref) ?? { relays: [], keys: new Map(), from: new Set() };
-        entry.relays = union(entry.relays, b.relays ?? []);
+        entry.relays = union(entry.relays, b.relays);
         entry.from.add(r.pubkey);
+        // a bundle's scope labels are not trusted: openCommunity takes each key's
+        // scope from the signed op log
         for (const k of b.keys) {
-            if (typeof k.scope === 'string' && typeof k.key === 'string') entry.keys.set(await keyIdOf(k.key), { scope: k.scope, key: k.key });
+            if (typeof k?.key === 'string' && /^[0-9a-f]{64}$/.test(k.key)) entry.keys.set(await keyIdOf(k.key), k.key);
         }
         out.set(b.ref, entry);
     }
@@ -106,20 +108,43 @@ export async function openCommunity(s, ref, { relays } = {}) {
     const listed = (await readList(s)).find((e) => e.ref === ref);
     const where = union(relays ?? [], b?.relays ?? [], listed?.relays ?? []);
     const rels = where.length ? where : s.relays;
-    const allKeys = b?.keys ?? new Map();
-    const stateKeys = [...allKeys.values()].filter((k) => k.scope === 'state');
-    const plain = await query(s.pool, rels, { kinds: [KIND.COMMUNITY_OP], '#h': [ref], limit: 5000 });
-    const sealed = await openEnvelopes(s, rels, stateKeys, KIND.COMMUNITY_OP);
-    const state = resolve(ref, [...plain, ...sealed]);
+    const bundled = [...(b?.keys ?? new Map()).entries()];   // [keyId, key]
+    const founder = ref.split(':')[0];
+    // The founder's ops are asked for separately, so that a flood of ops from
+    // others (anyone can tag an open community) cannot push the genesis op out
+    // of a relay's result limit.
+    const [plain, founders, sealed] = await Promise.all([
+        query(s.pool, rels, { kinds: [KIND.COMMUNITY_OP], '#h': [ref], limit: 5000 }),
+        query(s.pool, rels, { kinds: [KIND.COMMUNITY_OP], '#h': [ref], authors: [founder], limit: 5000 }),
+        openEnvelopes(s, rels, bundled.map(([, key]) => ({ key })), KIND.COMMUNITY_OP),
+    ]);
+    const ops = new Map([...plain, ...founders, ...sealed].map((e) => [e.id, e]));
+    // Plaintext parents that the limits left out are fetched by id.
+    for (let round = 0; round < 5; round++) {
+        const missing = [...new Set([...ops.values()].flatMap((e) => e.tags.filter((t) => t[0] === 'parent').map((t) => t[1])))]
+            .filter((id) => !ops.has(id));
+        const more = missing.length ? await query(s.pool, rels, { kinds: [KIND.COMMUNITY_OP], ids: missing }) : [];
+        if (!more.length) break;
+        for (const e of more) ops.set(e.id, e);
+    }
+    const state = resolve(ref, [...ops.values()]);
     if (!state) throw new Error('community not found, or no access');
-    // Keep only keys named by a valid key op: keys authenticate themselves through the log.
-    const named = new Set([...state.keyOps.values()].flat().map((k) => k.keyId));
-    const keys = new Map([...allKeys].filter(([id]) => named.has(id)));
+    // Keys count only if a valid key op names them, and their scope is the one
+    // that op gives: keys authenticate themselves through the log.
+    const scopeOf = new Map([...state.keyOps].flatMap(([scope, ks]) => ks.map((k) => [k.keyId, scope])));
+    const keys = new Map(bundled.filter(([id]) => scopeOf.has(id)).map(([id, key]) => [id, { scope: scopeOf.get(id), key }]));
     return { s, ref, relays: union(state.relays.length ? state.relays : rels), state, keys };
 }
 
+// Reloads ctx. Reloads can overlap (a watcher and an action, say); a result
+// replaces ctx only if no reload that started later has already done so.
 async function reload(ctx) {
-    Object.assign(ctx, await openCommunity(ctx.s, ctx.ref, { relays: ctx.relays }));
+    const started = ctx.reloads = (ctx.reloads ?? 0) + 1;
+    const fresh = await openCommunity(ctx.s, ctx.ref, { relays: ctx.relays });
+    if (started > (ctx.applied ?? 0)) {
+        Object.assign(ctx, fresh);
+        ctx.applied = started;
+    }
 }
 
 // Picks up other people's changes.
@@ -181,12 +206,20 @@ async function publishOp(ctx, body) {
 
 // Sends keys ([{scope, key}]) to each recipient, as a gift wrap on the community's
 // relays and the recipient's own.
-async function deliver(ctx, recipients, keys) {
-    if (!keys.length) return;
+// Sends keys ([{scope, key}]) to each recipient. A bundle without keys still
+// tells a new member about the community (open communities have no keys). A
+// failed delivery to one recipient does not stop the others; their client gets
+// the keys from the next rekey, or repair copies the bundle later.
+async function deliver(ctx, recipients, keys, { always = false } = {}) {
+    if (!keys.length && !always) return;
     const rumor = { kind: KIND.KEY_BUNDLE, content: JSON.stringify({ ref: ctx.ref, relays: ctx.relays, keys }) };
     for (const pk of recipients) {
-        const to = union(ctx.relays, await relaysOf(ctx.s, pk));
-        await publish(ctx.s.pool, to, wrapEvent(rumor, ctx.s.sk, pk));
+        try {
+            const to = union(ctx.relays, await relaysOf(ctx.s, pk));
+            await publish(ctx.s.pool, to, wrapEvent(rumor, ctx.s.sk, pk));
+        } catch (e) {
+            console.warn(`could not deliver community keys to ${pk.slice(0, 8)}:`, e.message);
+        }
     }
 }
 
@@ -257,7 +290,7 @@ export async function addMember(ctx, pk, role = 'member') {
     for (const ch of ctx.state.channels.values()) {
         if (ch.visibility === 'community' && ch.history === 'shared') keys.push(...keysOf(ctx, `ch:${ch.id}`));
     }
-    await deliver(ctx, [pk], keys);
+    await deliver(ctx, [pk], keys, { always: true });   // also tells them about an open community
     await heal(ctx);   // from-join channels get a new key now
 }
 
@@ -321,12 +354,6 @@ export async function leaveChannel(ctx, channel) {
     await publishOp(ctx, { type: 'channel-leave', channel, heads: await chainHeads(ctx, channel, ctx.s.pk) });
 }
 
-// Hands a channel's past keys to a member who joined after them (shared history only).
-export async function shareHistory(ctx, channel, pk) {
-    if (ctx.state.channel(channel).history !== 'shared') throw new Error('this channel does not share its history');
-    await deliver(ctx, [pk], keysOf(ctx, `ch:${channel}`));
-}
-
 // ---- messages ----
 
 const readable = (ctx, channel) => !ctx.state.encrypted(`ch:${channel}`) || keysOf(ctx, `ch:${channel}`).length > 0;
@@ -337,7 +364,8 @@ async function rawMessages(ctx, channel) {
     const scope = `ch:${channel}`;
     const events = ctx.state.encrypted(scope)
         ? await openEnvelopes(ctx.s, ctx.relays, keysOf(ctx, scope), KIND.COMMUNITY_MESSAGE)
-        : await query(ctx.s.pool, ctx.relays, { kinds: [KIND.COMMUNITY_MESSAGE], '#h': [ctx.ref], limit: 5000 });
+        // plaintext: only from people who were ever members, so strangers' spam is not even fetched
+        : await query(ctx.s.pool, ctx.relays, { kinds: [KIND.COMMUNITY_MESSAGE], '#h': [ctx.ref], authors: [...ctx.state.ever], limit: 5000 });
     return events
         .filter((e) => tag(e, 'community') === ctx.ref && tag(e, 'channel') === channel)
         .map((e) => ({
@@ -380,13 +408,8 @@ export async function readChannel(ctx, channel, { topic } = {}) {
     const raw = await rawMessages(ctx, channel);
     const byId = new Map(raw.map((m) => [m.id, m]));
     const reachable = new Map();   // departed pubkey -> ids reachable from their sealed heads
-    const counts = (m) => {
-        if (state.hidden.has(m.id) || state.retracted.get(m.id) === m.from) return false;
-        if (!m.seen.some((at) => state.joinedBy(channel, m.from, at))) return false;   // written before joining
-        if (state.inChannel(channel, m.from)) return true;
-        if (!state.everIn(channel, m.from)) return false;
-        const heads = state.departed.get(`${m.from}|${channel}`);
-        if (!heads) return true;   // not sealed yet
+    // Whether m is in its sender's chain as sealed when they departed.
+    const inSealedChain = (m, heads) => {
         if (!reachable.has(m.from)) {
             const seen = new Set();
             const stack = [...heads];
@@ -400,6 +423,18 @@ export async function readChannel(ctx, channel, { topic } = {}) {
             reachable.set(m.from, seen);
         }
         return reachable.get(m.from).has(m.id);
+    };
+    const counts = (m) => {
+        if (state.hidden.has(m.id) || state.retracted.get(m.id)?.has(m.from)) return false;
+        if (!m.seen.some((at) => state.joinedBy(channel, m.from, at))) return false;   // written before joining
+        const heads = state.departed.get(`${m.from}|${channel}`);
+        if (state.inChannel(channel, m.from)) {
+            // a member who left and came back: what they wrote while away does not
+            // count, only their sealed chain and what they wrote since coming back
+            return !heads || inSealedChain(m, heads) || m.seen.some((at) => state.joinedBy(channel, m.from, at, { latest: true }));
+        }
+        if (!state.everIn(channel, m.from)) return false;
+        return !heads || inSealedChain(m, heads);   // without heads: not sealed yet
     };
     let messages = raw.filter(counts).sort((a, b) => a.ms - b.ms || (a.id < b.id ? -1 : 1));
     if (topic !== undefined) messages = messages.filter((m) => m.topic === topic);

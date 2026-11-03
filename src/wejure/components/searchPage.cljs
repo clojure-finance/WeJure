@@ -9,7 +9,7 @@
             [wejure.common :as common]))
 
 (defn search-page [{{:keys [search-input]} :path-params}]
-  (let [results (r/atom [])]                                         ;; [{:username :pk :picture}], exact matches only
+  (let [results (r/atom nil)]                                        ;; [{:username :pk :picture}], exact matches only
     (.then (app/searchUsers search-input)
            #(reset! results (js->clj % :keywordize-keys true)))
     (fn [{{:keys [search-input]} :path-params}]
@@ -21,6 +21,8 @@
         "Search result for: " search-input]
        [:> Paper {:variant "outlined"
                   :sx {:height 800 :my 2 :overflow "auto"}}
+        (when (= [] @results)
+          [:> Typography {:align "center" :sx {:p 2}} "No user has this name."])
         (for [{:keys [username pk picture]} @results]
           ^{:key pk}
           [:> Box {:sx {:display "flex" :box-shadow 1}}
@@ -31,5 +33,5 @@
            [:> Box {:style {:display "flex" :flex-grow 1 :justify-content "flex-end"}}
             [:> Button {:sx {:my 3 :mr 4 :width 80 :height 35}
                         :variant "contained"
-                        :href (reitit-fe/href :wejure.core/user {:username username})}
+                        :href (reitit-fe/href :wejure.core/user {:username (str "~" pk)})}
              "Profile"]]])]])))

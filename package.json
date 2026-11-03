@@ -1,5 +1,8 @@
 {
   "private": true,
+  "engines": {
+    "node": ">=22.13"
+  },
   "scripts": {
     "start": "node server/index.js",
     "dev": "node scripts/dev.js",

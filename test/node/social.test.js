@@ -2,7 +2,8 @@
 import { after, before, describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { crashAll, startAll, wejureServer } from './harness.js';
-import { KIND, createPool, query } from 'wejure-nostr/core.js';
+import { createSeal, createWrap } from 'nostr-tools/nip59';
+import { KIND, createPool, publish, query, sign } from 'wejure-nostr/core.js';
 import { login, profile, register, updateProfile } from 'wejure-nostr/account.js';
 import { block, conversation, feedPage, follow, follows, post, sendDM, unfollow } from 'wejure-nostr/social.js';
 
@@ -40,6 +41,29 @@ describe('accounts, feed, blocking and messages', () => {
         await follow(phone, alice.pk);
         assert.equal((await profile(fresh, fresh.pk)).about, 'changed at once');
         assert.ok((await follows(fresh)).includes(alice.pk));
+    });
+
+    test('malformed profiles and messages from strangers are dropped, not fatal', async () => {
+        const troll = track(await register(relays, 'troll', 'troll-pw'));
+        await publish(troll.pool, relays, sign(troll, { kind: KIND.PROFILE, content: 'not json' }));
+        assert.deepEqual(await profile(alice, troll.pk), {});
+        // a sealed message whose inside is not a well-formed event
+        const rumor = { kind: KIND.DM, content: { not: 'a string' }, pubkey: troll.pk, created_at: 1, id: 'x' };
+        await publish(troll.pool, relays, createWrap(createSeal(rumor, troll.sk, alice.pk), alice.pk));
+        await sendDM(troll, alice.pk, 'a normal one');
+        assert.deepEqual((await conversation(alice, troll.pk)).map((m) => m.text), ['a normal one']);
+    });
+
+    test('the feed pages through posts that share one second without skipping any', async () => {
+        const busy = track(await register(relays, 'busy', 'busy-pw'));
+        const second = Math.floor(Date.now() / 1000) - 500;
+        for (let i = 0; i < 15; i++) await post(busy, `same second ${i}`, null, { created_at: second });
+        const first = await feedPage(alice, { authors: [busy.pk], limit: 10 });
+        const rest = await feedPage(alice, { authors: [busy.pk], limit: 10, until: first.next });
+        const all = [...first.posts, ...rest.posts].map((p) => p.content);
+        assert.equal(first.posts.length, 10);
+        assert.equal(new Set(all).size, 15, 'every post once');
+        assert.equal(rest.next, null);
     });
 
     test('two accounts claiming one username each log into their own account', async () => {

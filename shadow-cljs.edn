@@ -7,6 +7,6 @@
                 :output-dir "public/js"
                 :asset-path "/js"
                 :modules {:main {:entries [wejure.core]}}
-;; server/index.js serves public/ (npm run dev runs both)
+                ;; no :http-root: server/index.js serves public/ (npm run dev runs both)
                 :devtools {:before-load wejure.core/stop
                            :after-load wejure.core/start}}}}

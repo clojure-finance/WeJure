@@ -57,7 +57,7 @@ describe('live updates', () => {
         await eventually(() => woken > 0);
     });
 
-    test('an open community view follows new messages, also after a key change', async () => {
+    test('a community view that stays open follows new messages, also after a key change', async () => {
         const club = await C.createCommunity(alice, { name: 'Live Club' });
         const general = C.channelByName(club, 'general');
         await C.addMember(club, bob.pk);

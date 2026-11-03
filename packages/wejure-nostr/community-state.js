@@ -47,7 +47,7 @@ function newState(ref, founder) {
         additions: new Map(),    // scope -> op ids that brought someone in
         departed: new Map(),     // "<pubkey>|<channel>" -> Set of that member's last message ids
         hidden: new Set(),       // message ids hidden by moderators
-        retracted: new Map(),    // message id -> pubkey that retracted it
+        retracted: new Map(),    // message id -> Set of pubkeys that retracted it (only the author's counts)
         proposals: new Map(),    // op id -> {action, approvals, done}
         addedBy: new Map(),      // "<pubkey>|state" or "<pubkey>|ch:<id>" -> op ids that brought them in
     };
@@ -188,15 +188,15 @@ function replay(ref, founder, ordered, anc, caps) {
             case 'channel-create': {
                 const vis = b.visibility === 'private' ? 'private' : 'community';
                 if (role < ADMIN || typeof b.channel !== 'string' || S.channels.has(b.channel)) return false;
-                const members = vis === 'private' ? new Set([actor, ...(b.members ?? []).filter(isMember)]) : new Set();
+                const needsKey = S.mode === 'private' || vis === 'private';
+                if (needsKey && typeof b.keyId !== 'string') return false;
+                const listed = Array.isArray(b.members) ? b.members.filter(isMember) : [];
+                const members = vis === 'private' ? new Set([actor, ...listed]) : new Set();
                 const c = { id: b.channel, name: String(b.name ?? ''), visibility: vis,
                     history: b.history === 'from-join' ? 'from-join' : 'shared', archived: false, members, ever: new Set(members) };
                 S.channels.set(c.id, c);
                 for (const pk of members) push(S.addedBy, `${pk}|ch:${c.id}`, op.id);
-                if (encrypted(`ch:${c.id}`)) {
-                    if (typeof b.keyId !== 'string') return false;
-                    push(S.keyOps, `ch:${c.id}`, { id: op.id, keyId: b.keyId });
-                }
+                if (needsKey) push(S.keyOps, `ch:${c.id}`, { id: op.id, keyId: b.keyId });
                 return true;
             }
             case 'channel-update':
@@ -228,7 +228,7 @@ function replay(ref, founder, ordered, anc, caps) {
             case 'rekey': {
                 const scope = b.scope;
                 if (typeof scope !== 'string' || typeof b.keyId !== 'string') return false;
-                if (scope !== 'state' && !S.channels.has(scope.slice(3))) return false;
+                if (scope !== 'state' && !(scope.startsWith('ch:') && S.channels.has(scope.slice(3)))) return false;
                 if (!encrypted(scope)) return false;
                 if (scope !== 'state' && !inChannel(S.channels.get(scope.slice(3)), actor)) return false;
                 push(S.keyOps, scope, { id: op.id, keyId: b.keyId });
@@ -247,7 +247,8 @@ function replay(ref, founder, ordered, anc, caps) {
                 return true;
             case 'retract':
                 if (typeof b.message !== 'string') return false;
-                S.retracted.set(b.message, actor);
+                if (!S.retracted.has(b.message)) S.retracted.set(b.message, new Set());
+                S.retracted.get(b.message).add(actor);
                 return true;
             default:
                 return false;
@@ -262,7 +263,9 @@ function replay(ref, founder, ordered, anc, caps) {
             if (rev.id !== op.id && !anc.get(rev.id)?.has(op.id) && !anc.get(op.id).has(rev.id)) role = Math.min(role, rev.roleAfter);
         }
         // apply() checks everything before changing anything, so an invalid op leaves no trace
-        if (apply(op, role)) valid.add(op.id);
+        let ok = false;
+        try { ok = apply(op, role); } catch { ok = false; }   // a malformed op is just invalid
+        if (ok) valid.add(op.id);
     }
     return { S, valid, revocations };
 }
@@ -341,11 +344,15 @@ function withHelpers(S, extra) {
         return !!ch && (ch.visibility === 'community' ? S.ever.has(pk) : ch.ever.has(pk));
     };
     // Whether pk had been brought into the channel as of op `at` (an op id): so a
-    // message naming `at` was written after they joined.
-    const joinedBy = (id, pk, at) => {
+    // message naming `at` was written after they joined. With latest, only their
+    // most recent joining counts (for members who left and were brought back).
+    const joinedBy = (id, pk, at, { latest = false } = {}) => {
         const seen = extra.anc.get(at);
         if (!seen) return false;
-        const by = (key) => (S.addedBy.get(key) ?? []).some((a) => a === at || seen.has(a));
+        const by = (key) => {
+            const adds = S.addedBy.get(key) ?? [];
+            return (latest ? adds.slice(-1) : adds).some((a) => a === at || seen.has(a));
+        };
         return by(`${pk}|state`) && (channel(id)?.visibility !== 'private' || by(`${pk}|ch:${id}`));
     };
     const roleOf = (pk) => Object.keys(ROLE).find((k) => ROLE[k] === rank(pk));

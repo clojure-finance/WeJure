@@ -149,7 +149,7 @@ test('WeJure end to end', async ({ browser }) => {
         const hit = dana.locator('div.MuiBox-root', { hasText: ALICE }).last();
         await expect(hit.locator('img.MuiAvatar-img')).toHaveAttribute('src', /^blob:/);
         await hit.getByRole('link', { name: 'Profile' }).click();
-        await expect(dana).toHaveURL(BASE + '/user/' + ALICE);
+        await expect(dana).toHaveURL(/\/user\/~[0-9a-f]{64}$/);                  // the account, not the name
         await expect(dana.getByText('hi there').first()).toBeVisible();
         await expect(dana.getByText('Hello World').first()).toBeVisible();
         await dana.getByRole('button', { name: 'Follow' }).click();

@@ -12,7 +12,3 @@ node_modules
 
 # data of the local server (server/index.js)
 data/
-
-# local scratch files
-src/wejure/components/ipfsTest.cljs
-src/wejure/components/testPage.cljs

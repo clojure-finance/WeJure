@@ -1,5 +1,6 @@
-// Reliability specs: posts confirmed by the relay, deletions that reach other
-// users, and chat subscriptions that end with the chat page.
+// Reliability specs: the configured relays are the ones used, posts confirmed
+// by the relay, deletions that reach other users, and chat subscriptions that
+// end with the chat page.
 const { test, expect } = require('@playwright/test');
 const relay = require('./relay');
 
@@ -67,6 +68,28 @@ async function goHome(page) {
     await page.locator('header a').first().click();
     await expect(page).toHaveURL(BASE + '/home');
 }
+
+test('the app uses the relays and media servers listed in config.js', async ({ browser }) => {
+    const context = await browser.newContext({ baseURL: BASE, viewport: { width: 1400, height: 900 } });
+    // The same server under another name: if the app used the page's own
+    // origin instead of the configuration, it would connect to localhost.
+    await context.route('**/config.js', (route) => route.fulfill({
+        contentType: 'text/javascript',
+        body: 'window.WEJURE_CONFIG = { relays: ["ws://127.0.0.1:8020"], mediaServers: ["http://127.0.0.1:8020"] };',
+    }));
+    const page = await context.newPage();
+    const sockets = [];
+    page.on('websocket', (ws) => sockets.push(ws.url()));
+    const uploads = [];
+    page.on('request', (r) => { if (r.method() === 'PUT') uploads.push(r.url()); });
+    await register(page, 'configured' + N);
+    await login(page, 'configured' + N);
+    expect(sockets.length).toBeGreaterThan(0);
+    expect(sockets.every((url) => url.startsWith('ws://127.0.0.1:8020'))).toBe(true);
+    expect(uploads.length).toBeGreaterThan(0);                                // the profile picture
+    expect(uploads.every((url) => url.startsWith('http://127.0.0.1:8020/'))).toBe(true);
+    await context.close();
+});
 
 test('a post the relay does not confirm stays in the composer', async ({ browser }) => {
     const writer = 'writer' + N;

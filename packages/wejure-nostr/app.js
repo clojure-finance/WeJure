@@ -3,7 +3,7 @@
 // Map or Set interop. The logged-in session lives here.
 import * as account from './account.js';
 import * as C from './communities.js';
-import { KIND, createPool, query } from './core.js';
+import { KIND, createPool, query, repair } from './core.js';
 import { fetchBlob, mediaServersOf, upload } from './media.js';
 import { clear, restore, save, siteConfig } from './session.js';
 import { forgetCache } from './cache.js';
@@ -13,8 +13,27 @@ let current;
 
 // The logged-in session, or null.
 export function session() {
-    if (current === undefined) current = restore();
+    if (current === undefined) {
+        current = restore();
+        if (current) repairLater(current);
+    }
     return current;
+}
+
+// Once per tab session, with more than one relay: a while after the page loads,
+// copy the user's own events, and the gift wraps addressed to them, to every
+// relay that misses them (core.js repair), so relays that were down catch up.
+function repairLater(s) {
+    if (s.relays.length < 2) return;
+    try {
+        if (sessionStorage.getItem('wejure-repaired')) return;
+        sessionStorage.setItem('wejure-repaired', '1');
+    } catch { return; }
+    setTimeout(() => {
+        repair(s.pool, s.relays, { authors: [s.pk] })
+            .then(() => repair(s.pool, s.relays, { kinds: [KIND.GIFT_WRAP], '#p': [s.pk] }))
+            .catch((e) => console.warn('repair failed:', e.message));
+    }, 5000);
 }
 
 export const loggedIn = () => !!session();
@@ -27,24 +46,33 @@ export function me() {
 
 const message = (e) => e?.message ?? String(e);
 
+// Resolves with null once p does, or with p's error message: what the screens'
+// write actions get, so a failed write is shown, never silently dropped.
+const outcome = (p) => p.then(() => null, (e) => message(e));
+
 // ---- accounts ----
 
 // Login, registration and logout are each followed by a page load, which closes
 // the relay connections; closing them here instead races the CLOSE messages the
 // pool still sends, and the browser logs errors for those.
 
-// Creates an account; photo is a File or null. Resolves with null, or an error message.
+// Creates an account; photo is a File or null. Resolves with null, or an error
+// message. The photo is uploaded before anything is published, so a failed
+// upload leaves no half-made account behind.
 export async function register(username, password, photo) {
     const { relays, mediaServers } = siteConfig();
     if ((await account.claimants(createPool(), relays, username)).length) {
         return 'Username already exists. Please choose a different username.';
     }
+    const s = account.newAccount(relays, username, { mediaServers });
+    let picture = '';
     try {
-        const s = await account.register(relays, username, password, { mediaServers });
-        if (photo) {
-            const m = await upload(s, new Uint8Array(await photo.arrayBuffer()), photo.type || 'application/octet-stream');
-            await account.updateProfile(s, { picture: m.sha256 });
-        }
+        if (photo) picture = (await upload(s, new Uint8Array(await photo.arrayBuffer()), photo.type || 'application/octet-stream')).sha256;
+    } catch (e) {
+        return `The profile picture could not be uploaded: ${message(e)}`;
+    }
+    try {
+        await account.publishAccount(s, password, { picture });
         return null;
     } catch (e) {
         return `The account could not be saved: ${message(e)}`;
@@ -56,8 +84,7 @@ export async function login(username, password) {
     const { relays, mediaServers } = siteConfig();
     try {
         const s = await account.login(relays, username, password, { mediaServers });
-        const p = await account.profile(s, s.pk);
-        save(s, { picture: p?.picture ?? '' });
+        save(s, { picture: clean(await account.profile(s, s.pk))?.picture ?? '' });
         current = undefined;   // restored on next use, like after a reload
         return null;
     } catch (e) {
@@ -67,7 +94,7 @@ export async function login(username, password) {
 
 export function logout() {
     const s = session();
-    if (s) forgetCache(s.pk);   // the decrypted cache of this account on this device
+    if (s) forgetCache(s);   // the decrypted cache of this account on this device
     clear();
     current = undefined;
 }
@@ -107,14 +134,21 @@ export async function uploadFile(file) {
 // ---- profiles ----
 
 const profiles = new Map();
+const isHash = (x) => typeof x === 'string' && /^[0-9a-f]{64}$/.test(x);
+const text = (x) => (typeof x === 'string' ? x : '');
 
-// {pk, username, about, picture}, or null for an unknown account.
+// The fields WeJure shows from a profile, as strings (anyone can publish
+// anything), or null.
+const clean = (p) => p && { username: text(p.name), about: text(p.about), picture: isHash(p.picture) ? p.picture : '' };
+
+// {pk, username, about, picture}, or null for an unknown account (or if it
+// cannot be read right now; that is not remembered).
 export function profile(pk) {
-    if (!/^[0-9a-f]{64}$/.test(pk)) return Promise.resolve(null);
+    if (!isHash(pk)) return Promise.resolve(null);
     if (!profiles.has(pk)) {
-        profiles.set(pk, account.profile(session(), pk).then((p) => p && {
-            pk, username: p.name ?? '', about: p.about ?? '', picture: p.picture ?? '',
-        }));
+        profiles.set(pk, account.profile(session(), pk).then(
+            (p) => p && { pk, ...clean(p) },
+            () => { profiles.delete(pk); return null; }));
     }
     return profiles.get(pk);
 }
@@ -128,14 +162,11 @@ export async function searchUsers(username) {
     return (await Promise.all(pks.map(profile))).filter(Boolean);
 }
 
-export async function updateBio(about) {
-    await account.updateProfile(session(), { about });
-    profiles.delete(session().pk);
-}
+export const updateBio = (about) => outcome(account.updateProfile(session(), { about }).then(() => profiles.delete(session().pk)));
 
 export const isFollowing = async (pk) => (await social.follows(session())).includes(pk);
-export const follow = (pk) => social.follow(session(), pk).then(() => null);
-export const unfollow = (pk) => social.unfollow(session(), pk).then(() => null);
+export const follow = (pk) => outcome(social.follow(session(), pk));
+export const unfollow = (pk) => outcome(social.unfollow(session(), pk));
 
 // ---- posts ----
 
@@ -149,7 +180,8 @@ async function postView(e) {
 }
 
 // One page of posts, newest first: by `authors` (default: the people the user
-// follows), older than `until`. Resolves with {posts, next}; next is null at the end.
+// follows), from the cursor `until` on (null: from now). Resolves with
+// {posts, next}; next is the next page's cursor, or null at the end.
 export async function postsPage({ authors, until, limit = 20 } = {}) {
     const page = await social.feedPage(session(), { authors: authors ?? undefined, until: until ?? undefined, limit });
     return { posts: await Promise.all(page.posts.map(postView)), next: page.next };
@@ -164,10 +196,10 @@ export function watchPosts({ authors, onPost, onDelete }) {
     (authors ? Promise.resolve(authors) : social.follows(s)).then((as) => {
         if (stopped) return;
         stop = social.watchFeed(s, as, {
-            onPost: async (e) => onPost(await postView(e)),
+            onPost: (e) => postView(e).then(onPost, (err) => console.warn('could not show a post:', err)),
             onDelete: (id, pk) => onDelete(id, pk),
         });
-    });
+    }, (err) => console.warn('could not follow the feed:', err));
     return () => { stopped = true; stop(); };
 }
 
@@ -181,7 +213,7 @@ export async function newPost(text, imageHash, imageType) {
     return [await postView(event), saved];
 }
 
-export const deletePost = (id) => social.deletePost(session(), id).then(() => null);
+export const deletePost = (id) => outcome(social.deletePost(session(), id));
 
 // The recent posts of the people the user follows that contain the query.
 export async function searchPosts(text) {
@@ -220,12 +252,12 @@ export async function conversation(pk) {
 }
 
 // Resolves with null, or an error message.
-export const sendMessage = (pk, text) => social.sendDM(session(), pk, text).then(() => null, (e) => message(e));
+export const sendMessage = (pk, text) => outcome(social.sendDM(session(), pk, text));
 
 // Calls onChange when a message (or a community key) arrives. Returns a stop function.
 export const watchInbox = (onChange) => social.watchInbox(session(), () => onChange());
 
-export const block = (pk) => social.block(session(), pk).then(() => null);
+export const block = (pk) => outcome(social.block(session(), pk));
 
 // ---- communities ----
 
@@ -255,7 +287,15 @@ const summary = (ctx) => ({ ref: ctx.ref, name: ctx.state.name, mode: ctx.state.
 export async function myCommunities() {
     const s = session();
     const { joined, invitations } = await C.myCommunities(s);
-    const load = async (ref) => { try { return await contextOf(ref); } catch { return null; } };
+    const load = async (ref) => {
+        try {
+            const ctx = await contextOf(ref);
+            await C.refresh(ctx);   // names and roles change
+            return ctx;
+        } catch {
+            return null;
+        }
+    };
     const js = (await Promise.all([...joined.keys()].map(load))).filter(Boolean).map(summary);
     const invs = await Promise.all(invitations.map(async (inv) => {
         const ctx = await load(inv.ref);
@@ -273,11 +313,11 @@ export async function createCommunity(name, mode, join) {
     return ctx.ref;
 }
 
-export async function acceptInvitation(ref) {
+// Resolves with null, or an error message.
+export const acceptInvitation = (ref) => outcome((async () => {
     const inv = (await C.myCommunities(session())).invitations.find((i) => i.ref === ref);
     if (inv) await C.accept(session(), inv);
-    return null;
-}
+})());
 
 // Joins an open community; resolves with null, or an error message.
 export async function joinCommunity(ref) {

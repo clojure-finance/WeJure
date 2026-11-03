@@ -108,17 +108,17 @@
                 "Message"]
                [:> Button {:sx {:mt 16 :mb 4 :mr 4 :width 100 :height 40 :border-radius 30}
                            :variant "outlined"
-                           :on-click (fn []
-                                       (app/unfollow pub)
-                                       (swap! info assoc :following? false))}
+                           :on-click #(.then (app/unfollow pub)
+                                             (fn [err]
+                                               (if err (js/alert err) (swap! info assoc :following? false))))}
                 "Unfollow"]]
 
               :else
               [:> Button {:sx {:mt 16 :mb 4 :mr 4 :width 100 :height 40 :border-radius 30}
                           :variant "contained"
-                          :on-click (fn []
-                                      (app/follow pub)
-                                      (swap! info assoc :following? true))}
+                          :on-click #(.then (app/follow pub)
+                                            (fn [err]
+                                              (if err (js/alert err) (swap! info assoc :following? true))))}
                "Follow"])]]]
 
          [post-list posts]
@@ -144,9 +144,13 @@
           [:> DialogActions
            [:> Button
             {:on-click (fn []
-                         (app/updateBio @bio-input)
-                         (swap! info assoc :about @bio-input)
-                         (reset! form-open false))}
+                         (let [bio @bio-input]
+                           (.then (app/updateBio bio)
+                                  (fn [err]
+                                    (if err
+                                      (js/alert err)
+                                      (do (swap! info assoc :about bio)
+                                          (reset! form-open false)))))))}
             "Save changes"]]]]))
     (finally
       (stop-posts))))

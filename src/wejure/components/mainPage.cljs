@@ -21,7 +21,8 @@
     (reset! loading true)
     (reset! error nil)
     (-> (if submitted-image
-          (app/uploadFile submitted-image)
+          (.catch (app/uploadFile submitted-image)
+                  (fn [^js err] (throw (js/Error. (str "Could not upload the image: " (.-message err))))))
           (js/Promise.resolve nil))
         (.then (fn [image-hash]
                  (app/newPost submitted-text image-hash (some-> submitted-image .-type))))
@@ -37,7 +38,7 @@
                                     (do (when (= @text submitted-text) (reset! text ""))
                                         (when (identical? @image submitted-image) (reset! image nil)))))))))
         (.catch (fn [^js err]
-                  (reset! error (str "Could not upload the image: " (.-message err)))))
+                  (reset! error (.-message err))))
         (.finally #(reset! loading false)))))
 
 (defn- load-page! [posts next]
@@ -90,7 +91,9 @@
             :id "upload-image"
             :type "file"
             :style {:display "none"}
-            :on-change #(reset! image (-> % .-target .-files (aget 0)))}]
+            :on-change (fn [e]
+                         (reset! image (-> e .-target .-files (aget 0)))
+                         (set! (.. e -target -value) ""))}]                ;; so the same file can be chosen again
           [:> IconButton
            {:component "span"}
            [:> AddAPhotoSharpIcon]]]

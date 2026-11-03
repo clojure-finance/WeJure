@@ -53,19 +53,22 @@ founder's `create` op carrying the nonce. Every other op must descend from it.
 
 **Scopes and keys.** Each encrypted area has its own key chain: the scope
 `state` (the op log itself) and one scope per encrypted channel (`ch:<id>`).
-In private communities everything is encrypted. In open communities the op
-log and community-wide channels are plaintext, and private channels are
-encrypted. A *key op* (`create`, `channel-create` or `rekey`) announces a new
-key by its hash (`keyId`). The key itself goes to each member of the scope in
-a gift wrap (NIP-59), so every device of that member can fetch it. A key
-counts only if its hash appears in a valid key op, so keys authenticate
-themselves through the signed op log, and it doesn't matter who delivered
-them.
+In private communities everything is encrypted. In open communities the op log
+and community-wide channels are plaintext, and private channels are encrypted.
+A *key op* (`create`, `channel-create` or `rekey`) announces a new key by its
+id, `keyId = sha256("wejure-key-id:" + key)`. The key itself goes to each
+member of the scope in a gift wrap (NIP-59), so every device of that member
+can fetch it. A key counts only if its id appears in a valid key op, so keys
+authenticate themselves through the signed op log, and it doesn't matter who
+delivered them.
 
-**Envelopes.** Encrypted ops and messages are signed by their author, encrypted
-with the scope's key (NIP-44), and published as kind 1462 from a throwaway key
-under the tag `h = sha256(key)`. Relays see random keys and random tags. Open
-plaintext ops and messages are published as they are, tagged `h = <community id>`.
+**Envelopes.** Encrypted ops and messages are signed by their author,
+encrypted with the scope's key (NIP-44), and published as kind 1462 from a
+throwaway key under the tag `h = sha256("wejure-envelope:" + key)`, a
+different hash than the key's id, so a removed member who still reads the old
+op log (and sees new key ids) cannot find the new envelopes. Relays see random
+keys and random tags. Open plaintext ops and messages are published as they
+are, tagged `h = <community id>`.
 
 **Messages** (kind 1461): `{channel, topic, text}`, plus three kinds of tags.
 `prev` tags name the sender's own latest messages in that channel, so each
@@ -88,9 +91,9 @@ the same second still sort correctly.
 | `channel-create {channel, name, visibility, history, members?, keyId?}` | admin+ | |
 | `channel-update`, `channel-archive` | admin+ | |
 | `channel-add {channel, member}`, `channel-remove {channel, member, heads}` | admin+ | private channels |
-| `channel-leave {channel, heads}` | self | |
+| `channel-leave {channel, heads}` | self | private channels |
 | `rekey {scope, keyId}` | any member of the scope | new key for the scope |
-| `seal {member, channel, heads}` | channel members | records a departed member's last messages |
+| `seal {member, channel, heads}` | channel members, admin+ | records a departed member's last messages |
 | `hide {message}` | moderator+ | moderation |
 | `retract {message}` | the message's author | deletes one's own message |
 
@@ -113,8 +116,9 @@ the same second still sort correctly.
 5. **Owners.** Adding, demoting or removing an owner happens through
    `propose`/`approve`. The action applies at the op that brings approvals
    from current owners above half of the owners. A community always keeps at
-   least one owner. With several owners, one lost or rogue owner can neither
-   wreck the community nor freeze it.
+   least one owner. With three or more owners, one lost or rogue owner can
+   neither take the owner role over nor freeze it (with two, every owner
+   change needs both). Any owner can still remove non-owners on their own.
 
 ## Keys
 
@@ -130,10 +134,11 @@ the same second still sort correctly.
   first rekeys it (any member may). The person removing someone rekeys right
   away, so in practice this happens only after leaves and in races.
 - **New members:** they get every state key, so they can check the op log back
-  to the genesis. For `shared` channels they get all past keys from whoever
-  adds them (and any member can share keys they hold); for `from-join`
-  channels the addition forces a rekey, so they hold only keys from after
-  they joined.
+  to the genesis. For `shared` channels they get all past keys whoever adds
+  them holds; for `from-join` channels the addition forces a rekey, so they
+  hold only keys from after they joined.
+- **Labels are not trusted:** a key bundle says which scope each key is for,
+  but a client takes the scope from the key op that names the key.
 
 ## Departed members (no backdating)
 
@@ -158,7 +163,9 @@ A message counts if:
   so messages written before joining never count (otherwise someone could post
   a pile of spam and then join to make it appear);
 - its sender is a member of the channel, or was one and the message is in
-  their sealed chain;
+  their sealed chain. A member who departed and was brought back gets their
+  sealed chain plus what they wrote after the latest return, not what they
+  wrote while away;
 - it has not been hidden by a moderator or retracted by its author.
 
 Topics are free text inside the message, as in Zulip. A channel's topic list
@@ -170,7 +177,12 @@ is computed from its messages.
   the new member: the community id, its relays, all state keys, and the
   channel keys the member is entitled to. A new device rebuilds everything from
   those bundles.
-- **Open:** anyone with the id and relays reads the op log and can `join`.
+- **Open:** anyone with the id and relays reads the op log and can `join`
+  (if `join` is `open`). Clients ask for the founder's ops separately and fetch
+  missing parents by id, so a flood of ops from strangers cannot push the
+  genesis out of a relay's result limit. Messages are only asked for from
+  people who were ever members. When an admin adds someone, a key bundle
+  without keys tells them about the community.
 - Each user keeps their community list in an app-data event encrypted to
   themselves, so open communities come back on a new device too. Invitations
   to private communities show up as bundles, and the client lists only the

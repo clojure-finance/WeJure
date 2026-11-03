@@ -126,10 +126,14 @@
                       :size "small"
                       :start-icon (r/as-element [:> BlockIcon])
                       :on-click (fn []
-                                  (app/block (:pk @peer))
-                                  (js/alert (str "You have blocked " (:username @peer)))
-                                  (close-chat!)
-                                  (load-contacts!))
+                                  (let [{:keys [pk username]} @peer]
+                                    (.then (app/block pk)
+                                           (fn [err]
+                                             (if err
+                                               (js/alert err)
+                                               (do (js/alert (str "You have blocked " username))
+                                                   (close-chat!)
+                                                   (load-contacts!)))))))
                       :sx {:ml "auto"}}
            "Block User"])]
 

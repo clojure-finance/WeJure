@@ -18,6 +18,15 @@
          [:> Typography {:variant "h6" :gutter-bottom true} title]]
         body))
 
+(defn- community-ref
+  "The community id in a pasted link (.../c/<id>) or id, or nil."
+  [text]
+  (let [s (-> (str/trim text) (str/split #"[?#]") first (str/split #"/c/") last (str/replace #"/+$" ""))]
+    (try
+      (let [ref (js/decodeURIComponent s)]
+        (when (re-matches #"[0-9a-f]{64}:[0-9a-f]+" ref) ref))
+      (catch :default _ nil))))
+
 (defn- open-community! [ref]
   (reitit-fe/push-state :wejure.core/community {:ref ref}))
 
@@ -43,7 +52,10 @@
              [:> Typography {:sx {:flex-grow 1}}
               [:b name] (str " – invited by " (str/join ", " from))]
              [:> Button {:variant "contained"
-                         :on-click #(.then (app/acceptInvitation ref) load!)}
+                         :on-click #(.then (app/acceptInvitation ref)
+                                           (fn [err]
+                                             (reset! error err)
+                                             (load!)))}
               "Accept"]])])
 
        [section "Your communities"
@@ -72,6 +84,7 @@
                      :disabled (or (empty? @new-name) @busy)
                      :on-click (fn []
                                  (reset! busy true)
+                                 (reset! error nil)
                                  (-> (app/createCommunity @new-name @new-mode "open")
                                      (.then open-community!)
                                      (.catch #(reset! error (str "Could not create it: " (.-message ^js %))))
@@ -85,12 +98,14 @@
          [:> Button {:variant "contained"
                      :disabled (or (empty? @join-ref) @busy)
                      :on-click (fn []
-                                 (let [ref (js/decodeURIComponent (last (str/split @join-ref #"/c/")))]
-                                   (reset! busy true)
-                                   (-> (app/joinCommunity ref)
-                                       (.then (fn [err]
-                                                (if err (reset! error err) (open-community! ref))))
-                                       (.finally #(reset! busy false)))))}
+                                 (reset! error nil)
+                                 (if-let [ref (community-ref @join-ref)]
+                                   (do (reset! busy true)
+                                       (-> (app/joinCommunity ref)
+                                           (.then (fn [err]
+                                                    (if err (reset! error err) (open-community! ref))))
+                                           (.finally #(reset! busy false))))
+                                   (reset! error "That is not a community link.")))}
           "Join"]]]
 
        (when @error

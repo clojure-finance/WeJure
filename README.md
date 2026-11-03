@@ -37,7 +37,9 @@ together with the server, also at http://localhost:8020.
   `relays: ["wss://relay-one.example", "wss://relay-two.example"]`. Any
   standard Nostr relay and Blossom server works. Each user's relay and media
   server lists are also saved in their account (NIP-65, BUD-03), so others
-  can find their data.
+  can find their data. With more than one relay, each client copies its user's
+  own events, and the messages addressed to them, to any relay that misses
+  them, once per session, so a relay that was down catches up.
 - **The server**:
   ```bash
   node server/index.js [--port 8020] [--host 127.0.0.1] [--data data] [--public public]
@@ -46,7 +48,9 @@ together with the server, also at http://localhost:8020.
   machines, use `--host 0.0.0.0` behind a TLS proxy, so the relay is
   reachable as `wss://`. Its relay keeps deletion requests and refuses deleted
   events if anyone sends them again. Its media server accepts uploads signed
-  by any account; a public deployment would want limits there.
+  by any account (a public deployment would want limits there). It serves
+  pictures, audio and video as such, and anything else as a sandboxed
+  download, since it shares its origin with the app.
 
 ## Security and encryption
 - **Identity**: an account is a secp256k1 key pair; the public key is the
@@ -73,8 +77,9 @@ together with the server, also at http://localhost:8020.
 - **Communities** are designed in [docs/COMMUNITIES.md](docs/COMMUNITIES.md).
   In private communities, relays see neither the community, the senders nor
   the topics. Members can read exactly the periods they belonged to. Removed
-  members cannot slip in backdated messages or actions. One lost or rogue
-  owner cannot wreck or freeze a community.
+  members cannot slip in backdated messages or actions. Changing the owners
+  needs a majority of them, so with three or more owners, one lost or rogue
+  owner can neither take over nor freeze the community.
 - **The device cache**: each gift wrap and envelope is decrypted and checked
   once. The results are kept in IndexedDB, one database per account,
   encrypted (AES-GCM) with a key derived from the account key. That key is
@@ -84,10 +89,15 @@ together with the server, also at http://localhost:8020.
   under an id the cache already knows.
 - **Public data**: profiles, posts, follows, relay lists, and everything in
   open communities.
+- **Data from strangers** (profiles, messages, relay lists, community
+  operations) is checked for shape before use, so malformed data is dropped,
+  not fatal.
 - **Limits**: a stolen account key reveals what that account could read (no
   forward secrecy). Deletions are requests: relays that ignore NIP-09 may
   keep a deleted post, though WeJure hides it once any relay has the
-  request.
+  request. Reads ask for at most 5000 events at a time, so a flood of gift
+  wraps to one user can push older direct messages and community keys out of
+  view.
 
 ## Data model
 Everything is a Nostr event (NIP-01). The kinds WeJure uses:
@@ -148,7 +158,7 @@ The project is under development. Not built yet:
 - unblocking;
 - fetching only what is new: every view still downloads all of its events
   from the relays (decrypting is cached, transfer is not);
-- relays syncing with each other (NIP-77); clients repair relays that fall
-  behind instead;
+- relays syncing with each other (NIP-77); clients repair their own data
+  instead (see Configuration);
 - deleting media;
 - account recovery (a lost password is a lost account).

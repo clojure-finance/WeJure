@@ -2,9 +2,8 @@
 // asks all of them and merges, and repair() copies events to relays that miss them.
 // Nothing here trusts a relay: events are signed, and invalid ones are dropped.
 import { SimplePool } from 'nostr-tools/pool';
-import { finalizeEvent, getEventHash, verifyEvent } from 'nostr-tools/pure';
-import { bytesToHex, hexToBytes } from 'nostr-tools/utils';
-
+import { finalizeEvent, getEventHash, validateEvent, verifyEvent } from 'nostr-tools/pure';
+import { bytesToHex } from 'nostr-tools/utils';
 
 // Event kinds. Standard ones from the NIPs, then WeJure's own (placeholders).
 export const KIND = {
@@ -16,20 +15,41 @@ export const KIND = {
     KEY_BUNDLE: 1463,           // community keys, only ever inside a gift wrap
 };
 
-// Whether an event is intact: its id must be the hash of its content (so a
-// relay cannot pass off other content under a known id, which the cache keys
-// on) and its signature valid. Gift wraps and envelopes are signed by one-time
+// Whether an event is intact: well formed (string content, string tags, ...),
+// its id the hash of its content (so a relay cannot pass off other content
+// under a known id, which the cache keys on) and its signature valid. Gift wraps and envelopes are signed by one-time
 // keys, so their outer signature proves nothing and is skipped; what they carry
 // is checked after decryption. Valid signatures are remembered, so an event
 // seen again (from another relay, or in the next query) costs only the hash.
 const verified = new Set();
 export function checkEvent(e) {
-    try { if (getEventHash(e) !== e.id) return false; } catch { return false; }
+    try { if (!validateEvent(e) || getEventHash(e) !== e.id) return false; } catch { return false; }
     if (e.kind === KIND.GIFT_WRAP || e.kind === KIND.ENVELOPE) return true;
     if (verified.has(e.id + e.sig)) return true;
     const ok = verifyEvent(e);
     if (ok) verified.add(e.id + e.sig);
     return ok;
+}
+
+// The entries of a relay list that are relay URLs. Relay lists come from other
+// people (bundles, settings, NIP-65 lists); anything else would make the pool
+// throw or hang.
+export function relayUrls(list) {
+    if (!Array.isArray(list)) return [];
+    return [...new Set(list.filter((u) => {
+        try { return typeof u === 'string' && ['ws:', 'wss:'].includes(new URL(u).protocol); } catch { return false; }
+    }))];
+}
+
+// Relays refuse filters with very long lists (NIP-01 leaves the limit to them),
+// so lists of ids, authors or tag values are sent in chunks.
+const CHUNK = 200;
+export function chunked(filter) {
+    const key = Object.keys(filter).find((k) => Array.isArray(filter[k]) && filter[k].length > CHUNK);
+    if (!key) return [filter];
+    const parts = [];
+    for (let i = 0; i < filter[key].length; i += CHUNK) parts.push(...chunked({ ...filter, [key]: filter[key].slice(i, i + CHUNK) }));
+    return parts;
 }
 
 export const createPool = () => new SimplePool({ enablePing: false, enableReconnect: false, verifyEvent: checkEvent });
@@ -57,6 +77,7 @@ export const after = (prev) => Math.max(Math.floor(Date.now() / 1000), (prev?.cr
 // Sends event to every relay. Resolves with which relays stored it once at least
 // minAcks did; rejects otherwise. A relay that is down simply counts as failed.
 export async function publish(pool, relays, event, { minAcks = 1, maxWait = 3000 } = {}) {
+    relays = relayUrls(relays);
     const results = await Promise.allSettled(pool.publish(relays, event, { maxWait }));
     const stored = relays.filter((_, i) => results[i].status === 'fulfilled');
     const failed = relays.filter((_, i) => results[i].status === 'rejected');
@@ -66,13 +87,16 @@ export async function publish(pool, relays, event, { minAcks = 1, maxWait = 3000
     return { stored, failed };
 }
 
-// Asks every relay, merges, drops duplicates and anything with a bad signature,
-// newest first.
+// Asks every relay, merges, drops duplicates and anything malformed or badly
+// signed, newest first. A `limit` applies per relay and chunk, so callers that
+// want the newest n take the first n of the result.
 export async function query(pool, relays, filter, { maxWait = 3000 } = {}) {
-    const events = await pool.querySync(relays, filter, { maxWait });
+    relays = relayUrls(relays);
+    if (!relays.length) return [];
+    const batches = await Promise.all(chunked(filter).map((f) => pool.querySync(relays, f, { maxWait })));
     const byId = new Map();
-    for (const e of events) if (checkEvent(e)) byId.set(e.id, e);
-    return [...byId.values()].sort((a, b) => b.created_at - a.created_at);
+    for (const e of batches.flat()) if (checkEvent(e)) byId.set(e.id, e);
+    return [...byId.values()].sort((a, b) => b.created_at - a.created_at || (a.id < b.id ? -1 : 1));   // as relays order
 }
 
 // The newest event matching filter (for replaceable kinds), or null.
@@ -89,9 +113,10 @@ async function relayUp(pool, url) {
 // client can do this for anyone's data; a relay cannot tell a copy from the original.
 // Returns how many events were copied to each relay.
 export async function repair(pool, relays, filter) {
+    relays = relayUrls(relays);
     const per = await Promise.all(relays.map(async (url) => {
         if (!(await relayUp(pool, url))) return { url, up: false, events: [] };
-        const events = (await pool.querySync([url], { limit: 5000, ...filter }, { maxWait: 3000 })).filter(checkEvent);
+        const events = await query(pool, [url], { limit: 5000, ...filter });
         return { url, up: true, events };
     }));
     const all = new Map();

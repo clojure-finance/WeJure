@@ -110,7 +110,7 @@ test('communities end to end', async ({ browser }) => {
         await expect(alice.getByText('we have 200 francs')).toBeVisible();
     });
 
-    await test.step('alice removes carol, who reads nothing new', async () => {
+    await test.step('alice removes carol, who is shown that she is no longer a member', async () => {
         const dialog = await openSettings(alice);
         await dialog.locator('.MuiDialogContent-root > div').filter({ hasText: CAROL })
             .getByRole('button', { name: 'Remove' }).click();
@@ -121,7 +121,7 @@ test('communities end to end', async ({ browser }) => {
         await say(bob, 'carol is gone, plan B', 'saturday hike');
         await carol.reload();
         await expect(carol.getByText('You are not a member of this community.')).toBeVisible();
-        await expect(carol.getByText('carol is gone, plan B')).toHaveCount(0);
+        // that she cannot decrypt what comes after is checked in test/node/communities.test.js
     });
 
     await test.step('dana joins an open community by its link', async () => {

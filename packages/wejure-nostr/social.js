@@ -2,6 +2,7 @@
 import { getConversationKey, v2 as nip44 } from 'nostr-tools/nip44';
 import { unwrapEvent, wrapEvent } from 'nostr-tools/nip59';
 import { KIND, after, deletedIds, latest, publish, query, sign } from './core.js';
+import { getEventHash } from 'nostr-tools/pure';
 import { subscribe } from './live.js';
 import { decryptAll } from './cache.js';
 
@@ -56,22 +57,35 @@ export async function block(s, pk) {
     return publish(s.pool, s.relays, sign(s, { kind: KIND.MUTE_LIST, content, created_at: after(prev) }));
 }
 
-// One page of the feed: the newest posts of the people s follows, older than
-// `until` (seconds). Relays filter and limit on their side, so a page costs the
-// same however long everyone's history is. Deleted posts and blocked users are
-// left out. Returns {posts, next}, where next is the `until` for the next page.
-export async function feedPage(s, { until, limit = 10, authors } = {}) {
+// A page cursor: "<seconds>:<ids>", the time of the page's oldest posts and
+// the ids already shown at that second. Times have whole seconds, so several
+// posts can share one; the next page starts at that second and skips those ids.
+function parseCursor(cursor) {
+    if (cursor === undefined || cursor === null) return { until: undefined, skip: [] };
+    const [t, ids] = String(cursor).split(':');
+    return { until: Number(t), skip: ids ? ids.split(',') : [] };
+}
+
+// One page of the feed: the newest posts of the people s follows, from the
+// cursor on (undefined: from now). Relays filter and limit on their side, so a
+// page costs the same however long everyone's history is. Deleted posts and
+// blocked users are left out. Returns {posts, next}; next is the cursor of the
+// next page, or null at the end.
+export async function feedPage(s, { until: cursor, limit = 10, authors } = {}) {
     authors ??= await follows(s);
-    const posts = await query(s.pool, s.relays, { kinds: [KIND.POST], authors, until, limit });
-    const deletions = posts.length
-        ? await query(s.pool, s.relays, { kinds: [KIND.DELETION], authors, '#e': posts.map((p) => p.id) })
+    const { until, skip } = parseCursor(cursor);
+    const fetched = await query(s.pool, s.relays, { kinds: [KIND.POST], authors, until, limit: limit + skip.length });
+    const page = fetched.filter((p) => !skip.includes(p.id)).slice(0, limit);
+    const deletions = page.length
+        ? await query(s.pool, s.relays, { kinds: [KIND.DELETION], authors, '#e': page.map((p) => p.id) })
         : [];
-    const deleted = deletedIds([...posts, ...deletions]);
+    const deleted = deletedIds([...page, ...deletions]);
     const blockedSet = await blocked(s);
-    const page = posts.slice(0, limit);
+    const last = page.at(-1)?.created_at;
+    const atLast = [...(last === until ? skip : []), ...page.filter((p) => p.created_at === last).map((p) => p.id)];
     return {
         posts: page.filter((p) => !deleted.has(p.id) && !blockedSet.has(p.pubkey)),
-        next: page.length === limit ? page[page.length - 1].created_at - 1 : null,
+        next: page.length === limit ? `${last}:${atLast.join(',')}` : null,
     };
 }
 
@@ -85,12 +99,22 @@ export async function sendDM(s, toPk, text) {
     for (const pk of [toPk, s.pk]) await publish(s.pool, s.relays, wrapEvent(rumor, s.sk, pk));
 }
 
+// Whether a rumor (the unsigned event inside a seal) is well formed; anyone can
+// send anything.
+const wellFormed = (r) => !!r && typeof r.content === 'string' && Number.isInteger(r.kind)
+    && Number.isInteger(r.created_at) && Array.isArray(r.tags)
+    && r.tags.every((t) => Array.isArray(t) && t.every((v) => typeof v === 'string'))
+    && (() => { try { return getEventHash(r) === r.id; } catch { return false; } })();
+
 // Every gift-wrapped message addressed to s that decrypts, as rumors.
 export async function unwrapAll(s) {
     const wraps = await query(s.pool, s.relays, { kinds: [KIND.GIFT_WRAP], '#p': [s.pk], limit: 5000 });
     // each gift wrap is opened (and its seal's signature checked) once (cache.js);
-    // null for wraps that are not for us or forged
-    return (await decryptAll(s, wraps, (w) => unwrapEvent(w, s.sk))).filter(Boolean);
+    // null for wraps that are not for us, forged or malformed
+    return (await decryptAll(s, wraps, (w) => {
+        const r = unwrapEvent(w, s.sk);
+        return wellFormed(r) ? r : null;
+    })).filter(Boolean);
 }
 
 // The conversation between s and peerPk, oldest first.

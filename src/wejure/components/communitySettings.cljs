@@ -105,13 +105,14 @@
                               (reset! chosen #{}))}
        "Create"]]
      (when (= @visibility "private")
-       [:> Box
-        (for [{:keys [pk username]} (sort-by :username members)]
-          ^{:key pk}
-          [:> FormControlLabel {:label username
-                                :control (r/as-element
-                                          [:> Checkbox {:checked (contains? @chosen pk)
-                                                        :on-change (fn [] (swap! chosen (if (contains? @chosen pk) disj conj) pk) (r/flush))}])}])])]))
+       (let [picked @chosen]                                               ;; deref outside the lazy seq
+         [:> Box
+          (for [{:keys [pk username]} (sort-by :username members)]
+            ^{:key pk}
+            [:> FormControlLabel {:label username
+                                  :control (r/as-element
+                                            [:> Checkbox {:checked (contains? picked pk)
+                                                          :on-change (fn [] (swap! chosen (if (contains? @chosen pk) disj conj) pk) (r/flush))}])}])]))]))
 
 (defn- about-section [{:keys [ref name description mode join]} run!]
   (r/with-let [new-name (r/atom name)

@@ -94,7 +94,7 @@
         :component "div"
         :sx {:font-size "12px" :margin "0 20px 0 0"}}
        username]
-      [:a {:href (reitit-fe/href :wejure.core/user {:username username})
+      [:a {:href (reitit-fe/href :wejure.core/user {:username (str "~" (common/current-pub))})
            :style {:text-decoration "none"}}                              ;; a letter avatar is text
        [common/avatar {:picture (common/current-picture)
                        :author (common/current-pub)
