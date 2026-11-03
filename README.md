@@ -129,12 +129,15 @@ mirrors (`sync.js`): the first read fetches everything, page by page, and
 opens one live subscription per mirror and relay, which stays open for the
 page session. After that, a read asks each relay only to confirm it has sent
 everything so far (one empty round trip), and new events arrive through the
-subscription. If a subscription drops, the next read catches up from the
+subscription. Pages that follow changes (the chat, a community) listen to
+the mirrors instead of subscribing themselves, so each event arrives once per
+relay. If a subscription drops, the next read catches up from the
 newest event that relay had sent, less a minute for slow clocks (two days for
 gift wraps, which are backdated on purpose). The copies are saved in the
 device cache, so after a page load the first read catches up the same way
 instead of fetching everything, and a community whose relays are all down
-still opens. A community's state is computed again only when new
+still opens. While a page listens, a dropped subscription is restored after
+two seconds. A community's state is computed again only when new
 operations arrive. `npm run bench` shows the effect: with 600 messages and 200
 direct messages, a member's page update when a message arrives went from
 about 4500 events and 160 ms to 1 event and 10 ms.

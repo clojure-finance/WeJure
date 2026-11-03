@@ -4,7 +4,8 @@ import { after, before, describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { crashAll, startAll, wejureServer } from './harness.js';
 import { register } from 'wejure-nostr/account.js';
-import { deletePost, post, sendDM, watchFeed, watchInbox } from 'wejure-nostr/social.js';
+import { deletePost, post, sendDM, unwrapAll, watchFeed, watchInbox } from 'wejure-nostr/social.js';
+import { KIND } from 'wejure-nostr/core.js';
 import * as C from 'wejure-nostr/communities.js';
 
 const r1 = wejureServer(7171);
@@ -55,6 +56,45 @@ describe('live updates', () => {
         await new Promise((r) => setTimeout(r, 200));
         await sendDM(alice, bob.pk, 'ping');
         await eventually(() => woken > 0);
+    });
+
+    test('a page that reads and watches its messages gets each new one once per relay', async () => {
+        const dave = await register(relays, 'dave', 'dave-pw');
+        let wraps = 0;   // gift wraps to dave that relays send him
+        const ensure = dave.pool.ensureRelay.bind(dave.pool);
+        dave.pool.ensureRelay = async (url, opts) => {
+            const relay = await ensure(url, opts);
+            if (!relay.counting) {
+                const subscribe = relay.subscribe.bind(relay);
+                relay.subscribe = (filters, params) => subscribe(filters, { ...params, onevent: (e) => {
+                    if (e.kind === KIND.GIFT_WRAP) wraps++;
+                    params.onevent(e);
+                } });
+                relay.counting = true;
+            }
+            return relay;
+        };
+        let woken = 0;
+        stops.push(watchInbox(dave, () => { woken++; }));
+        await unwrapAll(dave);   // what the chat page reads
+        await new Promise((r) => setTimeout(r, 200));
+        await sendDM(alice, dave.pk, 'once');
+        await eventually(() => woken > 0);
+        await new Promise((r) => setTimeout(r, 300));
+        assert.equal(wraps, relays.length);
+        dave.pool.destroy();
+    });
+
+    test('a watcher keeps following after its relays restart', async () => {
+        let woken = 0;
+        stops.push(watchInbox(bob, () => { woken++; }));
+        await new Promise((r) => setTimeout(r, 200));
+        await crashAll([r1, r2]);
+        await startAll([r1, r2]);
+        await new Promise((r) => setTimeout(r, 2500));   // it subscribes again after 2 s
+        const before = woken;
+        await sendDM(alice, bob.pk, 'after the restart');
+        await eventually(() => woken > before, 8000);
     });
 
     test('a community view that stays open follows new messages, also after a key change', async () => {

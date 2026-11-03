@@ -5,7 +5,7 @@ import { KIND, after, deletedIds, latest, publish, query, sign } from './core.js
 import { getEventHash } from 'nostr-tools/pure';
 import { subscribe } from './live.js';
 import { decryptAll } from './cache.js';
-import { synced } from './sync.js';
+import { synced, watched } from './sync.js';
 
 // A signed post, not yet sent, optionally with a picture already on Blossom ({sha256, type}).
 export function newPost(s, text, media, { created_at } = {}) {
@@ -140,7 +140,7 @@ export function watchFeed(s, authors, { onPost, onDelete }) {
 }
 
 // Calls onChange whenever something new is gift-wrapped to s (a direct message,
-// or a key bundle for a community).
+// or a key bundle for a community). It listens to the mirror unwrapAll reads.
 export function watchInbox(s, onChange) {
-    return subscribe(s, [{ kinds: [KIND.GIFT_WRAP], '#p': [s.pk] }], onChange);
+    return watched(s, s.relays, { kinds: [KIND.GIFT_WRAP] }, '#p', [s.pk], onChange);
 }

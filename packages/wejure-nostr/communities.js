@@ -10,11 +10,11 @@ import { wrapEvent } from 'nostr-tools/nip59';
 import { hexToBytes } from 'nostr-tools/utils';
 import { KIND, after, checkEvent, latest, publish, query, randomHex, relayUrls, sha256Hex, sign } from './core.js';
 import { decryptAll } from './cache.js';
-import { synced } from './sync.js';
+import { synced, watched } from './sync.js';
 import { relaysOf } from './account.js';
 import { unwrapAll } from './social.js';
 import { resolve } from './community-state.js';
-import { debounce, subscribe } from './live.js';
+import { debounce } from './live.js';
 
 const utf8 = (s) => new TextEncoder().encode(s);
 // fn with its results remembered (for hashes, asked for again on every reload)
@@ -169,31 +169,43 @@ function reload(ctx) {
 export const refresh = reload;
 
 // Keeps ctx up to date while it is open: reloads it after new ops, messages or
-// keys arrive, then calls onChange(ctx). Returns a function that stops it. The
-// envelope tags change with every new key, so it re-subscribes when they do.
+// keys arrive, then calls onChange(ctx). Returns a function that stops it. It
+// listens to the mirrors the reads use (sync.js), so it adds no subscriptions
+// of its own. What it listens for changes with ctx: envelope tags with every
+// new key, the people whose plaintext messages count with every new member.
 export function watch(ctx, onChange) {
     let stopped = false;
-    let tags = null;
-    let stop = () => {};
     const changed = debounce(async () => {
         if (stopped) return;
         await reload(ctx);
         await follow();
         if (!stopped) onChange(ctx);
     });
+    const { s } = ctx;
+    const stops = [
+        watched(s, ctx.relays, { kinds: [KIND.COMMUNITY_OP] }, '#h', [ctx.ref], changed),   // plaintext ops (open communities)
+        watched(s, s.relays, { kinds: [KIND.GIFT_WRAP] }, '#p', [s.pk], changed),           // new keys
+    ];
+    const following = { envelopes: [null, () => {}], messages: [null, () => {}] };
+    // Listens for values under name, unless it already does.
+    const listen = (name, values, start) => {
+        const key = [...values].sort().join();
+        if (stopped || following[name][0] === key) return;
+        following[name][1]();
+        following[name] = [key, values.length ? start(values) : () => {}];
+    };
     const follow = async () => {
-        const next = (await Promise.all([...ctx.keys.values()].map((k) => tagOf(k.key)))).sort();
-        if (stopped || next.join() === tags?.join()) return;
-        tags = next;
-        stop();
-        stop = subscribe(ctx.s, [
-            { kinds: [KIND.COMMUNITY_OP, KIND.COMMUNITY_MESSAGE], '#h': [ctx.ref] },   // plaintext (open communities)
-            ...(tags.length ? [{ kinds: [KIND.ENVELOPE], '#h': tags }] : []),
-            { kinds: [KIND.GIFT_WRAP], '#p': [ctx.s.pk] },                            // new keys
-        ], changed, ctx.relays);
+        const tags = await Promise.all([...ctx.keys.values()].map((k) => tagOf(k.key)));
+        listen('envelopes', tags, (vs) => watched(s, ctx.relays, { kinds: [KIND.ENVELOPE] }, '#h', vs, changed));
+        listen('messages', ctx.state.mode === 'open' ? [...ctx.state.ever] : [], (vs) =>
+            watched(s, ctx.relays, { kinds: [KIND.COMMUNITY_MESSAGE], '#h': [ctx.ref] }, 'authors', vs, changed));
     };
     follow();
-    return () => { stopped = true; stop(); };
+    return () => {
+        stopped = true;
+        stops.forEach((stop) => stop());
+        Object.values(following).forEach(([, stop]) => stop());
+    };
 }
 
 function currentKey(ctx, scope) {

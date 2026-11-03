@@ -25,6 +25,10 @@
 // In browsers, each mirror bucket (a value's events, and its marks) is saved
 // in the encrypted device cache (cache.js), so after a page load the first
 // sync catches up from the saved marks instead of fetching everything.
+//
+// Screens that follow changes (watched) listen to the mirrors rather than
+// subscribing themselves, so each event arrives once. While anyone listens, a
+// dropped subscription is restored after a pause, catching up as above.
 import { matchFilter } from 'nostr-tools/filter';
 import { checkEvent, chunked, lateness, onPublish, relayUrls, trust } from './core.js';
 import { cacheOf } from './cache.js';
@@ -38,6 +42,7 @@ const FILTERS_PER_SUBSCRIPTION = 10;
 const MAX_WAIT = 3000;
 const NOTHING = { ids: ['0'.repeat(64)], limit: 1 };
 const SAVE_AFTER = 500;   // ms: changes to a bucket are saved together
+const RETRY_AFTER = 2000;  // ms: a listened-to subscription that dropped is restored after this
 
 // Subscribes to filters at a relay. Resolves with the subscription once the
 // relay has sent what it holds (EOSE), or with null if it does not answer in
@@ -137,6 +142,8 @@ function createMirror(pool, base, field, store) {
     const relays = new Map();    // url -> {marks, covered, live, queue}
     const loads = new Map();     // value -> promise of its saved bucket being loaded
     const unsaved = new Map();   // value -> events not saved yet (marks are saved whole)
+    const listeners = new Set(); // {relays, values, fn}: see watched()
+    const retries = new Map();   // url -> timer restoring its subscription
     let saving = null;           // the timer of the next save
     let saved = Promise.resolve();   // saves run one at a time, so marks never land before their events
     const tagName = field.startsWith('#') ? field.slice(1) : null;
@@ -146,6 +153,7 @@ function createMirror(pool, base, field, store) {
     const at = (url) => {
         if (!relays.has(url)) {
             relays.set(url, {
+                url,
                 marks: new Map(),     // value -> mark (seconds)
                 covered: new Set(),   // values caught up and followed live since
                 live: null,           // the live subscription: {values, close}
@@ -204,10 +212,16 @@ function createMirror(pool, base, field, store) {
     function add(e) {
         if (!matchFilter(base, e)) return [];
         const vs = valuesOf(e).filter((v) => buckets.has(v));
+        const fresh = [];
         for (const v of vs) {
             if (buckets.get(v).has(e.id)) continue;
             buckets.get(v).set(e.id, e);
             changed(v, e);
+            fresh.push(v);
+        }
+        for (const l of fresh.length ? listeners : []) {
+            if (!fresh.some((v) => l.values.has(v))) continue;
+            try { l.fn(e); } catch (err) { console.warn('a listener failed:', err); }
         }
         return vs;
     }
@@ -226,6 +240,23 @@ function createMirror(pool, base, field, store) {
         if (r.live !== live) return;   // an older subscription, already replaced
         r.live = null;
         r.covered.clear();
+        restoreLater(r.url);
+    }
+
+    // The values listeners follow at url.
+    const listenedAt = (url) => [...new Set([...listeners].filter((l) => l.relays.includes(url)).flatMap((l) => [...l.values]))];
+
+    // Subscribes at url again after a pause, and again after that until it
+    // works, while anyone listens there.
+    function restoreLater(url) {
+        if (retries.has(url) || !listenedAt(url).length) return;
+        retries.set(url, setTimeout(async () => {
+            retries.delete(url);
+            const values = listenedAt(url);
+            if (!values.length) return;
+            await sync([url], values);
+            if (!at(url).live) restoreLater(url);
+        }, RETRY_AFTER));
     }
 
     // A live subscription at url for values (several, if there are many).
@@ -314,18 +345,36 @@ function createMirror(pool, base, field, store) {
         return [...out.values()];
     }
 
-    return { add, sync, save: () => (store ? save() : Promise.resolve()) };
+    // Calls fn(event) for each new event for values at urls (see watched).
+    function listen(urls, values, fn) {
+        const l = { relays: relayUrls(urls), values: new Set(values), fn };
+        listeners.add(l);
+        sync(l.relays, values).then(() => {
+            if (listeners.has(l)) l.relays.filter((url) => !at(url).live).forEach(restoreLater);
+        });
+        return () => listeners.delete(l);
+    }
+
+    return { add, sync, listen, save: () => (store ? save() : Promise.resolve()) };
 }
 
 // Every event on relays matching base whose `field` is one of values: what
 // query() would return, without its result limit, and after the first call
 // from a live copy.
-export function synced(s, relays, base, field, values) {
+function mirrorOf(s, base, field) {
     const { mirrors } = registry(s.pool);
     const key = JSON.stringify([base, field]);
     if (!mirrors.has(key)) mirrors.set(key, createMirror(s.pool, base, field, s.sk ? cacheOf(s) : null));
-    return mirrors.get(key).sync(relays, values);
+    return mirrors.get(key);
 }
+
+export const synced = (s, relays, base, field, values) => mirrorOf(s, base, field).sync(relays, values);
+
+// Calls onEvent(event) for each event that newly reaches the mirror for
+// values at relays (the same mirror as synced() with the same base and
+// field), keeping its subscriptions there up while it listens. Returns a
+// function that stops listening.
+export const watched = (s, relays, base, field, values, onEvent) => mirrorOf(s, base, field).listen(relays, values, onEvent);
 
 // Saves what the session's mirrors have not saved yet, now.
 export async function saveMirrors(s) {
