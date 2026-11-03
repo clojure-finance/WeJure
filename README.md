@@ -179,6 +179,8 @@ site's stored data.
 ## Status
 The project is under development. Not built yet:
 - unblocking;
+- a size limit for the saved copies of relay data (see Fetching): they grow
+  without limit, until logout;
 - relays syncing with each other (NIP-77); clients repair their own data
   instead (see Configuration);
 - deleting media;
