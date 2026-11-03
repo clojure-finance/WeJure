@@ -302,6 +302,8 @@ export async function createChannel(ctx, { name, visibility = 'community', histo
     return channel;
 }
 
+export const archiveChannel = (ctx, channel) => publishOp(ctx, { type: 'channel-archive', channel });
+
 export const channelByName = (ctx, name) => [...ctx.state.channels.values()].find((c) => c.name === name)?.id;
 
 export async function addToChannel(ctx, channel, pk) {

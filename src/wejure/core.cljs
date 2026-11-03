@@ -5,6 +5,8 @@
             [reitit.frontend.easy :as reitit-fe]
             [wejure.common :as common]
             [wejure.components.chatPage :refer [chat-page]]
+            [wejure.components.communitiesPage :refer [communities-page]]
+            [wejure.components.communityPage :refer [community-page]]
             [wejure.components.loginPage :refer [login-page]]
             [wejure.components.mainPage :refer [main-page]]
             [wejure.components.navigationBar :refer [title-page-bar sign-in-bar main-page-bar chat-page-bar]]
@@ -25,7 +27,9 @@
    ["/search/:search-input" {:name ::search :view search-page :bar main-page-bar :private? true}]
    ["/searchPost/:search-input" {:name ::search-post :view search-page-post :bar main-page-bar :private? true}]
    ["/user/:username" {:name ::user :view profile-page :bar main-page-bar :private? true}]
-   ["/chat" {:name ::chat :view chat-page :bar chat-page-bar :private? true}]])
+   ["/chat" {:name ::chat :view chat-page :bar chat-page-bar :private? true}]
+   ["/communities" {:name ::communities :view communities-page :bar main-page-bar :private? true}]
+   ["/c/:ref" {:name ::community :view community-page :bar main-page-bar :private? true}]])
 
 (defn- on-navigate [match]
   (cond

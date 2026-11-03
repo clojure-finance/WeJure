@@ -2,6 +2,7 @@
 // promises of them), so the ClojureScript side can use js->clj and needs no
 // Map or Set interop. The logged-in session lives here.
 import * as account from './account.js';
+import * as C from './communities.js';
 import { KIND, createPool, query } from './core.js';
 import { fetchBlob, mediaServersOf, upload } from './media.js';
 import { clear, restore, save, siteConfig } from './session.js';
@@ -222,3 +223,175 @@ export const sendMessage = (pk, text) => social.sendDM(session(), pk, text).then
 export const watchInbox = (onChange) => social.watchInbox(session(), () => onChange());
 
 export const block = (pk) => social.block(session(), pk).then(() => null);
+
+// ---- communities ----
+
+const RANK = { none: 0, member: 1, moderator: 2, admin: 3, owner: 4 };
+const opened = new Map();   // ref -> promise of the community's context, while the page lives
+
+function contextOf(ref) {
+    if (!opened.has(ref)) {
+        opened.set(ref, C.openCommunity(session(), ref).catch((e) => { opened.delete(ref); throw e; }));
+    }
+    return opened.get(ref);
+}
+
+// Runs a change; resolves with null, or an error message.
+async function change(ref, fn) {
+    try {
+        await fn(await contextOf(ref));
+        return null;
+    } catch (e) {
+        return message(e).replace(/^operation not allowed: .*/, 'You are not allowed to do that.');
+    }
+}
+
+const summary = (ctx) => ({ ref: ctx.ref, name: ctx.state.name, mode: ctx.state.mode, myRole: ctx.state.roleOf(ctx.s.pk) });
+
+// {joined: [{ref, name, mode, myRole}], invitations: [{ref, name, from: [username]}]}
+export async function myCommunities() {
+    const s = session();
+    const { joined, invitations } = await C.myCommunities(s);
+    const load = async (ref) => { try { return await contextOf(ref); } catch { return null; } };
+    const js = (await Promise.all([...joined.keys()].map(load))).filter(Boolean).map(summary);
+    const invs = await Promise.all(invitations.map(async (inv) => {
+        const ctx = await load(inv.ref);
+        if (!ctx || !ctx.state.isMember(s.pk)) return null;   // withdrawn, or not really for us
+        const from = await Promise.all(inv.from.map(async (pk) => (await profile(pk))?.username ?? pk.slice(0, 8)));
+        return { ref: inv.ref, name: ctx.state.name, from };
+    }));
+    return { joined: js, invitations: invs.filter(Boolean) };
+}
+
+// Resolves with the new community's ref.
+export async function createCommunity(name, mode, join) {
+    const ctx = await C.createCommunity(session(), { name, mode, join: mode === 'open' ? join : 'invite' });
+    opened.set(ctx.ref, Promise.resolve(ctx));
+    return ctx.ref;
+}
+
+export async function acceptInvitation(ref) {
+    const inv = (await C.myCommunities(session())).invitations.find((i) => i.ref === ref);
+    if (inv) await C.accept(session(), inv);
+    return null;
+}
+
+// Joins an open community; resolves with null, or an error message.
+export async function joinCommunity(ref) {
+    try {
+        const ctx = await C.join(session(), ref, session().relays);
+        opened.set(ref, Promise.resolve(ctx));
+        return null;
+    } catch (e) {
+        return message(e).startsWith('operation not allowed') ? 'This community cannot be joined.' : message(e);
+    }
+}
+
+export const leaveCommunity = (ref) => change(ref, async (ctx) => { await C.leave(ctx); opened.delete(ref); });
+
+// Which roles `me` may give `target` (owner changes become proposals).
+function roleChoices(meRank, targetRank, self) {
+    if (self) return [];
+    if (meRank === RANK.owner) return ['member', 'moderator', 'admin', 'owner'];
+    if (meRank === RANK.admin && targetRank <= RANK.moderator) return ['member', 'moderator'];
+    return [];
+}
+
+const mayRemove = (meRank, targetRank, self) =>
+    !self && (meRank === RANK.owner || (meRank >= RANK.moderator && meRank > targetRank));
+
+// Everything the community page shows, as plain data, with what the user may do.
+// Resolves with null if the community cannot be read.
+export async function community(ref) {
+    let ctx;
+    try {
+        ctx = await contextOf(ref);
+        await C.refresh(ctx);
+    } catch {
+        return null;
+    }
+    const st = ctx.state;
+    const me = ctx.s.pk;
+    const myRank = st.rank(me);
+    const members = await Promise.all(st.members().map(async (pk) => {
+        const p = await profile(pk);
+        const rank = st.rank(pk);
+        return {
+            pk, username: p?.username || pk.slice(0, 8), picture: p?.picture ?? '', role: st.roleOf(pk),
+            roleChoices: roleChoices(myRank, rank, pk === me), canRemove: mayRemove(myRank, rank, pk === me),
+        };
+    }));
+    const nameOf = (pk) => members.find((m) => m.pk === pk)?.username ?? pk.slice(0, 8);
+    const keysHeld = new Set([...ctx.keys.values()].map((k) => k.scope));
+    const channels = [...st.channels.values()].filter((c) => !c.archived).map((c) => ({
+        id: c.id, name: c.name, visibility: c.visibility, history: c.history,
+        member: st.inChannel(c.id, me),
+        readable: st.inChannel(c.id, me) && (!st.encrypted(`ch:${c.id}`) || keysHeld.has(`ch:${c.id}`)),
+        members: c.visibility === 'private' ? [...c.members].filter((pk) => st.isMember(pk)) : [],
+    }));
+    const proposals = [...st.proposals].filter(([, p]) => !p.done).map(([id, p]) => ({
+        id, type: p.action.type, member: p.action.member, memberName: nameOf(p.action.member), role: p.action.role ?? null,
+        approvals: [...p.approvals].map(nameOf), approvedByMe: p.approvals.has(me),
+    }));
+    return {
+        ref, name: st.name, description: st.description, mode: st.mode, join: st.join,
+        myRole: st.roleOf(me), isMember: st.isMember(me),
+        canManage: myRank >= RANK.admin, canModerate: myRank >= RANK.moderator, isOwner: myRank === RANK.owner,
+        channels, members, proposals,
+    };
+}
+
+// [{topic, count, last}] of a channel, most recent first.
+export async function topics(ref, channel) {
+    const ctx = await contextOf(ref);
+    return [...(await C.topics(ctx, channel))].map(([topic, t]) => ({ topic, count: t.count, last: t.last * 1000 }))
+        .sort((a, b) => b.last - a.last);
+}
+
+// The messages of a channel's topic (all topics if topic is null), oldest first.
+export async function messages(ref, channel, topic) {
+    const ctx = await contextOf(ref);
+    const msgs = await C.readChannel(ctx, channel, topic == null ? {} : { topic });
+    const canHide = ctx.state.rank(ctx.s.pk) >= RANK.moderator;
+    return Promise.all(msgs.map(async (m) => {
+        const p = await profile(m.from);
+        return {
+            id: m.id, from: m.from, username: p?.username || m.from.slice(0, 8), picture: p?.picture ?? '',
+            topic: m.topic, text: m.text, time: m.ms, mine: m.from === ctx.s.pk, canHide: canHide && m.from !== ctx.s.pk,
+        };
+    }));
+}
+
+export const sendCommunityMessage = (ref, channel, topic, text) => change(ref, (ctx) => C.sendMessage(ctx, channel, topic, text));
+export const hideMessage = (ref, id) => change(ref, (ctx) => C.hideMessage(ctx, id));
+export const retractMessage = (ref, id) => change(ref, (ctx) => C.retractMessage(ctx, id));
+
+// Adds the account with this username; resolves with null, or an error message.
+export async function addMember(ref, username, role) {
+    const pks = await lookupUser(username);
+    if (pks.length === 0) return `There is no user called ${username}.`;
+    if (pks.length > 1) return `Several accounts are called ${username}.`;
+    return change(ref, (ctx) => C.addMember(ctx, pks[0], role || 'member'));
+}
+
+export const removeMember = (ref, pk, ban) => change(ref, (ctx) => C.removeMember(ctx, pk, { ban: !!ban }));
+export const setRole = (ref, pk, role) => change(ref, (ctx) => C.setRole(ctx, pk, role));
+export const approve = (ref, proposal) => change(ref, (ctx) => C.approve(ctx, proposal));
+export const updateCommunity = (ref, settings) => change(ref, (ctx) => C.updateSettings(ctx, settings));
+export const archiveChannel = (ref, channel) => change(ref, (ctx) => C.archiveChannel(ctx, channel));
+
+// spec: {name, visibility, history, members: [pk]}; resolves with null, or an error message.
+export const createChannel = (ref, spec) => change(ref, (ctx) => C.createChannel(ctx, {
+    name: spec.name, visibility: spec.visibility || 'community', history: spec.history || 'shared', members: spec.members ?? [],
+}));
+
+export const addToChannel = (ref, channel, pk) => change(ref, (ctx) => C.addToChannel(ctx, channel, pk));
+export const removeFromChannel = (ref, channel, pk) => change(ref, (ctx) => C.removeFromChannel(ctx, channel, pk));
+
+// Calls onChange() whenever the community changes. Returns a stop function.
+export function watchCommunity(ref, onChange) {
+    let stop = () => {};
+    let stopped = false;
+    contextOf(ref).then((ctx) => { if (!stopped) stop = C.watch(ctx, () => onChange()); }, () => {});
+    return () => { stopped = true; stop(); };
+}

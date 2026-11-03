@@ -99,6 +99,12 @@
                        :author (common/current-pub)
                        :username username
                        :sx {:width 50 :height 50}}]]
+      [:> Button
+       {:color "inherit"
+        :variant "outlined"
+        :sx {:ml 2}
+        :href (reitit-fe/href :wejure.core/communities)}
+       "Communities"]
       (if (= page :chat)
         [:> Button
          {:color "inherit"
