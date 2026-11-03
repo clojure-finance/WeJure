@@ -237,3 +237,45 @@ async function check(page) {
     await expect(page.getByRole('button', { name: /^busy/ })).toContainText('130');
     expect(await shown(page)).toEqual([...Array(130).keys()]);
 }
+
+test('an owner change makes the owner\'s client write a checkpoint, and a new member loads from it', async ({ browser }) => {
+    const [FAY, GUS] = [`cfay${N}`, `cgus${N}`];
+    const fay = await newUser(browser, 'fay');
+    const gus = await newUser(browser, 'gus');
+    await signUp(fay, FAY);
+    await signUp(gus, GUS);
+    await fay.getByRole('link', { name: 'Communities' }).click();
+    await fay.getByLabel('Name').fill('Ledger');
+    await fay.getByRole('button', { name: 'Create' }).click();
+    await expect(fay).toHaveURL(/\/c\//, { timeout: 30000 });
+    await say(fay, 'written before the checkpoint', 'history');
+
+    const dialog = await openSettings(fay);
+    await addMember(dialog, GUS);
+    const row = dialog.locator('.MuiDialogContent-root > div').filter({ hasText: GUS });
+    await row.getByLabel('Role').click();
+    await fay.getByRole('option', { name: 'owner', exact: true }).click();
+    await expect(row.getByLabel('Role')).toHaveText('owner');
+    await dialog.getByRole('button').first().click();                          // close
+
+    // The owners changed, so fay's client proposes a checkpoint, which the
+    // founder alone accepts. Checked from the test process, as gus.
+    const { login } = await import('wejure-nostr/account.js');
+    const C = await import('wejure-nostr/communities.js');
+    const s = await login([RELAY], GUS, PASSWORD);
+    try {
+        const [invitation] = (await C.myCommunities(s)).invitations;
+        await expect.poll(async () => (await C.openCommunity(s, invitation.ref)).chain.length, { timeout: 30000 }).toBe(1);
+    } finally {
+        s.pool.destroy();
+    }
+
+    // gus's browser loads the community from it; the old message names ops
+    // from before the checkpoint
+    await acceptInvitation(gus, 'Ledger');
+    await expect(gus.getByText('written before the checkpoint')).toBeVisible();
+    await say(gus, 'and after it', 'history');
+    await expect(fay.getByText('and after it')).toBeVisible();
+
+    expect(problems).toEqual([]);
+});

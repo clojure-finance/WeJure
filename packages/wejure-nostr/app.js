@@ -353,6 +353,10 @@ export async function community(ref) {
     } catch {
         return null;
     }
+    // owners' clients propose and approve checkpoints on their own, in the background
+    ctx.maintaining ??= C.maintain(ctx)
+        .catch((e) => console.warn('checkpoint upkeep failed:', e))
+        .finally(() => { ctx.maintaining = null; });
     const st = ctx.state;
     const me = ctx.s.pk;
     const myRank = st.rank(me);

@@ -38,6 +38,11 @@
 // dated after it is there (0: everything). A catch-up that fills a whole
 // window leaves a gap below it, so the floor moves up to the window and
 // older() fills the gap.
+//
+// A full mirror can be synced from a time on (since): then only events dated
+// from then on are fetched, and its floor records that; a later sync from an
+// earlier time fetches the difference. Communities use it to skip the ops
+// before a checkpoint.
 import { matchFilter } from 'nostr-tools/filter';
 import { checkEvent, chunked, lateness, onPublish, relayUrls, trust } from './core.js';
 import { cacheOf } from './cache.js';
@@ -220,7 +225,7 @@ function createMirror(pool, base, field, store, paged) {
                     const r = at(url);
                     const { mark, floor } = typeof saved === 'number' ? { mark: saved } : saved;
                     r.marks.set(v, Math.max(r.marks.get(v) ?? 0, mark ?? 0));
-                    if (paged && typeof floor === 'number' && !r.floors.has(v)) r.floors.set(v, floor);
+                    if (typeof floor === 'number' && !r.floors.has(v)) r.floors.set(v, floor);
                 }
             })().catch((err) => console.warn('could not load a mirror:', err)));
         }
@@ -309,7 +314,9 @@ function createMirror(pool, base, field, store, paged) {
     }
 
     // Fetches what url holds for values from their marks on; whether it answered.
-    async function catchUp(url, r, values) {
+    // from: for a full mirror, the time values never fetched start at (0 or
+    // undefined: the beginning).
+    async function catchUp(url, r, values, from) {
         const groups = new Map();   // mark -> values, so values with the same mark share a request
         for (const v of values) {
             const mark = r.marks.get(v) ?? 0;
@@ -318,7 +325,8 @@ function createMirror(pool, base, field, store, paged) {
         }
         const results = await Promise.all([...groups].map(async ([mark, vs]) => {
             const asked = now();
-            const since = mark ? mark - lateness(base) : undefined;
+            const first = !paged && !mark && from ? vs.filter((v) => !r.floors.has(v)) : [];
+            const since = mark ? mark - lateness(base) : first.length ? from : undefined;
             const pages = paged
                 ? await fetchPages(url, { ...base, since }, vs)
                 : await fetchAll(pool, url, { ...base, [field]: vs, since }).then((events) => events && [{ values: vs, events }]);
@@ -334,10 +342,31 @@ function createMirror(pool, base, field, store, paged) {
                     else if (page.floor) setFloor(r, v, Math.max(r.floors.get(v), page.floor)); // a gap below
                 }
             }
+            for (const v of first) setFloor(r, v, from - 1);
             advance(r, vs, newest, asked);   // a future-dated event cannot push a mark ahead
             return true;
         }));
         return results.every(Boolean);
+    }
+
+    // Full mirrors: fetches what is missing between from (0: the beginning)
+    // and each value's floor; whether the relay answered.
+    async function deepen(url, r, values, from) {
+        const want = from ? from - 1 : 0;
+        const groups = new Map();   // floor -> values
+        for (const v of values) {
+            const floor = r.floors.get(v);
+            if (floor === undefined || floor <= want) continue;
+            if (!groups.has(floor)) groups.set(floor, []);
+            groups.get(floor).push(v);
+        }
+        for (const [floor, vs] of groups) {
+            const events = await fetchAll(pool, url, { ...base, [field]: vs, since: from || undefined, until: floor });
+            if (events === null) return false;
+            events.forEach(add);
+            for (const v of vs) setFloor(r, v, want);
+        }
+        return true;
     }
 
     function setFloor(r, v, floor) {
@@ -416,19 +445,21 @@ function createMirror(pool, base, field, store, paged) {
     }
 
     // Brings values at url up to date.
-    async function step(url, values) {
+    // Brings values at url up to date. from (full mirrors): the time from which
+    // everything must be there (0: everything; undefined: whatever was asked before).
+    async function step(url, values, from) {
         const r = at(url);
         const uncovered = values.filter((v) => !r.covered.has(v));
         if (!uncovered.length) {
             // followed live: only make sure everything sent so far has arrived
-            if ((await barrier(pool, url)) === null && r.live) drop(r, r.live);
-            return;
-        }
-        if (!(await followAt(url, values))) return;
-        const live = r.live;
-        if (await catchUp(url, r, uncovered)) {
+            if ((await barrier(pool, url)) === null && r.live) return drop(r, r.live);
+        } else {
+            if (!(await followAt(url, values))) return;
+            const live = r.live;
+            if (!(await catchUp(url, r, uncovered, from))) return;
             if (r.live === live) uncovered.forEach((v) => r.covered.add(v));
         }
+        if (!paged && from !== undefined) await deepen(url, r, values, from);
     }
 
     // Runs fn(url) after whatever runs at url already.
@@ -444,10 +475,10 @@ function createMirror(pool, base, field, store, paged) {
         await Promise.all(relayUrls(urls).map((url) => queued(url, () => followAt(url, values))));
     }
 
-    async function sync(urls, values) {
+    async function sync(urls, values, from) {
         values = [...new Set(values)];
         await Promise.all(values.map(load));
-        await Promise.all(relayUrls(urls).map((url) => queued(url, () => step(url, values))));
+        await Promise.all(relayUrls(urls).map((url) => queued(url, () => step(url, values, from))));
         const out = new Map();
         for (const v of values) for (const [id, e] of buckets.get(v)) out.set(id, e);
         return [...out.values()];
@@ -478,8 +509,10 @@ function mirrorOf(s, base, field, paged = false) {
 // Every event on relays matching base whose `field` is one of values: what
 // query() would return, without its result limit, and after the first call
 // from a live copy. With paged, only the newest events at first (see above).
-export const synced = (s, relays, base, field, values, { paged = false } = {}) =>
-    mirrorOf(s, base, field, paged).sync(relays, values);
+// With from (full mirrors): everything dated from then on (0: everything),
+// and maybe more that was fetched before.
+export const synced = (s, relays, base, field, values, { paged = false, from } = {}) =>
+    mirrorOf(s, base, field, paged).sync(relays, values, from);
 
 // For a paged mirror: fetches the next page of older events for values, and
 // resolves with whether there are older ones still. synced() then returns them too.

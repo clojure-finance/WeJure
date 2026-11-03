@@ -3,7 +3,7 @@ import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { finalizeEvent, generateSecretKey, getPublicKey } from 'nostr-tools/pure';
 import { KIND } from 'wejure-nostr/core.js';
-import { resolve } from 'wejure-nostr/community-state.js';
+import { acceptedChain, coveredIndex, epochIndex, resolve, snapshotOf } from 'wejure-nostr/community-state.js';
 
 const person = () => { const sk = generateSecretKey(); return { sk, pk: getPublicKey(sk) }; };
 let clock = 1_000_000;
@@ -164,4 +164,97 @@ describe('community rules', () => {
         }
     });
 
+
+    describe('checkpoints', () => {
+        const H = 'ab'.repeat(32);   // a stand-in hash: these rules do not look inside
+        // A checkpoint op on the state `at` (written on its heads).
+        const checkpointOn = (op, who, at, events, { prev = null, owners, offset = 0 } = {}) =>
+            op(who, { type: 'checkpoint', prev, hash: H, indexHash: H, state: [H], index: [H], owners: owners ?? at.members().filter((pk) => at.rank(pk) === 4), offset, count: at.order.length },
+                at.heads.map((id) => events.find((e) => e.id === id)));
+
+        test('a checkpoint\'s snapshot plus the ops after it give the state that all the ops give', () => {
+            const { f, ref, op, genesis } = community('private');
+            const [a, b, c] = [person(), person(), person()];
+            const ops = [genesis];
+            const next = (who, body, parents = [ops.at(-1)]) => { const e = op(who, body, parents); ops.push(e); return e; };
+            next(f, { type: 'channel-create', channel: 'g', name: 'general', keyId: 'kg' });
+            next(f, { type: 'add', member: a.pk, role: 'admin' });
+            next(f, { type: 'add', member: b.pk });
+            next(f, { type: 'channel-create', channel: 'p', name: 'secret', visibility: 'private', members: [a.pk, b.pk], keyId: 'kp' });
+            const fork = ops.at(-1);
+            next(a, { type: 'remove', member: b.pk, heads: { g: ['m1'] } });   // the state and both channels need new keys
+            next(f, { type: 'hide', message: 'm2' }, [fork, ops.at(-1)]);
+            next(f, { type: 'propose', action: { type: 'set-role', member: a.pk, role: 'owner' } });
+            const before = resolve(ref, ops);
+            const cp = checkpointOn(op, f, before, ops);
+
+            const after = [];
+            const more = (who, body, parents = [after.at(-1) ?? cp]) => { const e = op(who, body, parents); after.push(e); return e; };
+            more(f, { type: 'add', member: c.pk });
+            more(a, { type: 'rekey', scope: 'state', keyId: 'k2' });
+            more(a, { type: 'channel-add', channel: 'p', member: c.pk });
+            more(c, { type: 'retract', message: 'm3' });
+            more(a, { type: 'add', member: b.pk, role: 'admin' });   // not allowed: admins add members and moderators
+
+            const full = resolve(ref, [...ops, cp, ...after]);
+            const base = { checkpoint: cp, state: JSON.parse(JSON.stringify(snapshotOf(before))), covered: coveredIndex([{ offset: 0, entries: epochIndex(before, 0) }]) };
+            const fromCheckpoint = resolve(ref, [cp, ...after], { base });
+            assert.deepEqual(snapshotOf(fromCheckpoint), snapshotOf(full));
+            for (const e of after) assert.equal(fromCheckpoint.valid.has(e.id), full.valid.has(e.id));
+            assert.deepEqual(fromCheckpoint.heads, full.heads);
+            // messages name ops from before and after the checkpoint
+            for (const at of [...ops, cp, ...after]) {
+                for (const pk of [a.pk, b.pk, c.pk]) {
+                    for (const latest of [false, true]) {
+                        assert.equal(fromCheckpoint.joinedBy('p', pk, at.id, { latest }), full.joinedBy('p', pk, at.id, { latest }));
+                    }
+                }
+            }
+        });
+
+        test('a checkpoint counts once more than half of the previous owners approve it', () => {
+            const { f, ref, op, genesis } = community();
+            const [a, b, m] = [person(), person(), person()];
+            const H2 = 'cd'.repeat(32);
+            const body = (prev, owners, extra = {}) => ({ type: 'checkpoint', prev, hash: H, indexHash: H, state: [H], index: [H], owners, offset: 0, count: 1, ...extra });
+            const c1 = op(f, body(null, [f.pk, a.pk, b.pk]), [genesis]);                 // the founder alone suffices first
+            const c2 = op(a, body(c1.id, [a.pk]), [c1]);                                // a, plus b's approval: 2 of 3
+            const ok = op(b, { type: 'approve-checkpoint', checkpoint: c2.id }, [c2]);
+            const rival = op(m, body(c1.id, [m.pk], { hash: H2 }), [c1]);              // a stranger and his friend
+            const friend = op(m, { type: 'approve-checkpoint', checkpoint: rival.id }, [rival]);
+            const c3 = op(f, body(c2.id, [f.pk]), [ok]);                                // f is not among c2's owners
+            assert.deepEqual(acceptedChain(ref, [genesis, c1, c2, ok, rival, friend, c3]).map((e) => e.id), [c1.id, c2.id]);
+            assert.deepEqual(acceptedChain(ref, [genesis, c1, c2, rival, friend, c3]).map((e) => e.id), [c1.id], 'without b, a alone is 1 of 3');
+            const c3ok = op(a, { type: 'approve-checkpoint', checkpoint: c3.id }, [c3]);
+            assert.deepEqual(acceptedChain(ref, [c1, c2, ok, c3, c3ok]).map((e) => e.id), [c1.id, c2.id, c3.id]);
+        });
+
+        test('after a checkpoint, ops that do not build on it, or are dated before it, are ignored', () => {
+            const { f, ref, op, genesis } = community();
+            const [a, b, c] = [person(), person(), person()];
+            const addA = op(f, { type: 'add', member: a.pk, role: 'admin' }, [genesis]);
+            const before = resolve(ref, [genesis, addA]);
+            const cp = op(f, { type: 'checkpoint', prev: null, hash: H, indexHash: H, state: [H], index: [H], owners: [f.pk], offset: 0, count: 2 }, [addA]);
+            const late = op(a, { type: 'add', member: b.pk }, [addA]);                    // never saw the checkpoint
+            const backdated = op(a, { type: 'add', member: c.pk }, [cp], cp.created_at - 10);
+            const onTop = op(f, { type: 'settings', name: 'renamed' }, [late, cp]);       // builds on it (and on late)
+            const s = resolve(ref, [cp, late, backdated, onTop], { base: { checkpoint: cp, state: snapshotOf(before) } });
+            assert.ok(!s.isMember(b.pk) && !s.isMember(c.pk));
+            assert.equal(s.name, 'renamed');
+            assert.deepEqual(s.order.map((o) => o.id), [cp.id, onTop.id]);
+        });
+
+        test('the covered index answers ancestry as the full history does', () => {
+            const { f, ref, op, genesis } = community();
+            const ops = [genesis];
+            for (let i = 0; i < 120; i++) {
+                const from = Math.random() < 0.15 ? ops : ops.slice(-3);
+                const parents = [...new Set([0, 1, 2].slice(0, 1 + Math.floor(Math.random() * 3)).map(() => from[Math.floor(Math.random() * from.length)]))];
+                ops.push(op(f, { type: 'hide', message: `m${i}` }, parents, clock + Math.floor(Math.random() * 50)));
+            }
+            const s = resolve(ref, ops);
+            const index = coveredIndex([{ offset: 7, entries: JSON.parse(JSON.stringify(epochIndex(s, 7))) }]);
+            for (const b of s.order) for (const a of s.order) assert.equal(index.isAncestor(a.id, b.id), s.isAncestor(a.id, b.id));
+        });
+    });
 });

@@ -1,6 +1,7 @@
 // Times the expensive calls on a community of realistic size, and counts the
 // events relays send for each:
-//   node test/bench/community.bench.mjs [messages=300] [members=30] [dms=200]
+//   node test/bench/community.bench.mjs [messages=300] [members=30] [dms=200] [history=300]
+// history: further members added (as ops) for the checkpoint part
 import { performance } from 'node:perf_hooks';
 
 // Counts the events relays send (patched before nostr-tools captures WebSocket).
@@ -13,12 +14,13 @@ globalThis.WebSocket = class extends Base {
     }
 };
 const { startAll, crashAll, wejureServer } = await import('../node/harness.js');
-const { register } = await import('wejure-nostr/account.js');
+const { login, register } = await import('wejure-nostr/account.js');
+const { generateSecretKey, getPublicKey } = await import('nostr-tools/pure');
 const { sendDM, unwrapAll } = await import('wejure-nostr/social.js');
 const C = await import('wejure-nostr/communities.js');
 const { resolve } = await import('wejure-nostr/community-state.js');
 
-const [MSGS = 300, MEMBERS = 30, DMS = 200] = process.argv.slice(2).map(Number);
+const [MSGS = 300, MEMBERS = 30, DMS = 200, HISTORY = 300] = process.argv.slice(2).map(Number);
 const server = wejureServer(7291);
 await startAll([server]);
 const relays = [server.url];
@@ -78,6 +80,22 @@ try {
     for (let i = 0; i < 5; i++) { const [a, b] = await arrival(); ms += a; events += b; }
     console.log(`${'member: page update per arriving message'.padEnd(48)} ${(ms / 5).toFixed(0).padStart(6)} ms ${String(events / 5).padStart(7)} events`);
     await time('owner: sendMessage', () => C.sendMessage(club, general, 't0', 'and another'));
+    // A new device opening a community with a long history, before and after a checkpoint
+    await time(`add ${HISTORY} more members (ops)`, async () => {
+        for (let i = 0; i < HISTORY; i++) await C.addMember(club, getPublicKey(generateSecretKey()));
+    });
+    const newDevice = async (label) => {
+        const phone = await login(relays, 'm1', 'pw');
+        try {
+            await time(label, () => C.openCommunity(phone, club.ref));
+        } finally {
+            phone.pool.destroy();
+        }
+    };
+    await newDevice(`new device opens (${club.state.order.length} ops)`);
+    await time('owner: maintain (writes a checkpoint)', () => C.maintain(club, { every: 1 }));
+    await C.addMember(club, getPublicKey(generateSecretKey()));
+    await newDevice('new device opens (checkpoint + 1 op)');
     for (const n of [1000, 5000]) {
         const { ref, ops } = syntheticLog(n);
         await time(`resolve ${n} ops (pure, no I/O)`, () => resolve(ref, ops));

@@ -118,7 +118,7 @@ Everything is a Nostr event (NIP-01). The kinds WeJure uses:
 | 10063 | media server list | BUD-03 |
 | 24242 | media upload authorization | BUD-02, sent to the media server, not stored |
 | 30078 | app data | `d=wejure/account/<username>`: the password-encrypted key; `d=wejure/communities`: the user's community list, encrypted to them |
-| 1460–1463 | communities | operations, messages, encrypted envelopes, key bundles (see docs/COMMUNITIES.md; the numbers are WeJure's own for now) |
+| 1460–1464 | communities | operations, messages, encrypted envelopes, key bundles, checkpoint snapshot parts (see docs/COMMUNITIES.md; the numbers are WeJure's own for now) |
 
 The browser keeps the login in `sessionStorage` (`wejure-session`), so a reload
 stays logged in and closing the tab logs out. Decrypted events are cached in
@@ -141,8 +141,10 @@ still opens. While a page listens, a dropped subscription is restored after
 two seconds. Channels are paged mirrors: they fetch their newest 100
 messages, and older ones when the reader scrolls up (or presses "Load older
 messages"). Opening a community fetches its operations only, not the
-messages of its channels. A community's state is computed again only when new
-operations arrive. `npm run bench` shows the effect: with 600 messages and 200
+messages of its channels, and only those since its latest checkpoint: owners'
+clients write and approve checkpoints on their own (see
+docs/COMMUNITIES.md), so a new device starts from a snapshot. A community's
+state is computed again only when new operations arrive. `npm run bench` shows the effect: with 600 messages and 200
 direct messages, a member's page update when a message arrives went from
 about 4500 events and 160 ms to 1 event and 10 ms.
 
@@ -156,7 +158,7 @@ about 4500 events and 160 ms to 1 event and 10 ms.
   - `sync.js`: mirrors, local copies of relay data kept current by live subscriptions (see Fetching);
   - `account.js`, `social.js`, `media.js`, `session.js`, `live.js`;
   - `cache.js`: decrypted events, in memory and in IndexedDB, and the saved mirrors;
-  - `community-state.js`: the community rules, pure;
+  - `community-state.js`: the community rules, pure, checkpoints included;
   - `communities.js`: the community input and output.
 - `server/`: `index.js` (app, relay and media server on one port), `store.js` (the relay's event store on `node:sqlite`), `blossom.js` (the media server)
 - `public/config.js`: relays and media servers for this site
@@ -164,10 +166,10 @@ about 4500 events and 160 ms to 1 event and 10 ms.
 - `test/e2e/`: browser tests of the release build
 
 ## Testing
-- `npm test`: the Node tests (about 35 s). They cover accounts, the feed,
+- `npm test`: the Node tests (about 1 min). They cover accounts, the feed,
   messages, media, redundancy across crashing relays, live updates, fetching
-  only what is new (with saved copies, on fake-indexeddb), and the community
-  rules and attacks on them.
+  only what is new (with saved copies, on fake-indexeddb), paging through
+  long channels, the community rules and attacks on them, and checkpoints.
 - `npm run test:e2e`: builds the release version and runs Playwright through
   every page with several users, communities included (about 1 min). It
   fails on any console error. Install its browser once with
@@ -175,8 +177,10 @@ about 4500 events and 160 ms to 1 event and 10 ms.
   data on port 8020, so stop any WeJure server there first.
 - `npm run bench`: times loading, reading and sending in a community, and
   counts the events relays send for each (arguments: messages, default 300;
-  members, 30; direct messages, 200). It also times computing the state of
-  1000 and 5000 operations.
+  members, 30; direct messages, 200; further members for the checkpoint part,
+  300). It compares a new device opening a community of a few hundred
+  operations without and with a checkpoint (334 events and 8 events), and
+  times computing the state of 1000 and 5000 operations.
 
 ## Deleting all data
 Stop the server and delete its `data/` directory. Logins live only in the

@@ -13,6 +13,7 @@ export const KIND = {
     COMMUNITY_MESSAGE: 1461,    // a channel message, signed by its sender
     ENVELOPE: 1462,             // an encrypted op or message, from a throwaway key
     KEY_BUNDLE: 1463,           // community keys, only ever inside a gift wrap
+    SNAPSHOT_PART: 1464,        // a piece of a community checkpoint's snapshot or index
 };
 
 // Whether an event is intact: well formed (string content, string tags, ...),
