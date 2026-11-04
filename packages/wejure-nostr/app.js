@@ -200,17 +200,22 @@ export async function postsPage({ authors, until, limit = 20 } = {}) {
     return { posts: await Promise.all(page.posts.map(postView)), next: page.next };
 }
 
-// Follows new posts and deletions. authors defaults to the people the user
-// follows. Returns a function that stops it.
-export function watchPosts({ authors, onPost, onDelete }) {
+// Follows new posts and deletions, leaving out blocked users. authors
+// defaults to the people the user follows. onBlock([pk]) is called with
+// everyone blocked whenever the user blocks someone, so the screen can drop
+// their posts. Returns a function that stops it.
+export function watchPosts({ authors, onPost, onDelete, onBlock = () => {} }) {
     const s = session();
     let stop = () => {};
     let stopped = false;
+    let blocked = new Set();   // as of the last change: a post whose author is blocked while it loads is dropped
     (authors ? Promise.resolve(authors) : social.follows(s)).then((as) => {
         if (stopped) return;
         stop = social.watchFeed(s, as, {
-            onPost: (e) => postView(e).then(onPost, (err) => console.warn('could not show a post:', err)),
+            onPost: (e) => postView(e).then((p) => { if (!blocked.has(e.pubkey)) onPost(p); },
+                (err) => console.warn('could not show a post:', err)),
             onDelete: (id, pk) => onDelete(id, pk),
+            onBlock: (pks) => { blocked = pks; onBlock([...pks]); },
         });
     }, (err) => console.warn('could not follow the feed:', err));
     return () => { stopped = true; stop(); };

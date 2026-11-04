@@ -79,7 +79,9 @@ together with the server, also at http://localhost:8020.
   and not what.
 - **Blocking** uses a NIP-51 mute list whose entries WeJure encrypts to its
   owner, so nobody can see who blocks whom; public and NIP-04 entries that
-  other Nostr apps write count too. It works on the blocker's side.
+  other Nostr apps write count too. It works on the blocker's side, live
+  too: an open feed drops a blocked person's posts at once, also when the
+  block is made on another device.
 - **Communities** are designed in [docs/COMMUNITIES.md](docs/COMMUNITIES.md).
   In private communities, relays see neither the community, the senders nor
   the topics (they can tell which messages under one key share a sender, not

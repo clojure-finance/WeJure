@@ -178,6 +178,44 @@ test("a deleted post disappears from followers' feeds without a reload", async (
     expect(problems).toEqual([]);
 });
 
+test('blocking someone takes their posts out of a feed open in another tab, without a reload', async ({ browser }) => {
+    const author = 'blocked' + N;
+    const friend = 'friend' + N;
+    const reader = 'blocker' + N;
+    const [authorPage, friendPage, feed] = await Promise.all([author, friend, reader].map((who) => newPage(browser, who)));
+    for (const [page, name] of [[authorPage, author], [friendPage, friend], [feed, reader]]) {
+        await register(page, name);
+        await login(page, name);
+    }
+    const say = async (page, text) => {
+        const composer = page.getByPlaceholder("What's on your mind?");
+        await composer.fill(text);
+        await page.getByRole('button', { name: 'Post' }).click();
+        await expect(composer).toHaveValue('');
+    };
+    await say(authorPage, 'a post before the block');
+    await follow(feed, author);
+    await follow(feed, friend);
+    await goHome(feed);
+    await expect(feed.getByText('a post before the block')).toBeVisible();
+
+    // the reader blocks the author from the chat, in a second tab
+    const chat = watch(await feed.context().newPage(), 'reader, second tab');
+    await chat.goto('/login');
+    await login(chat, reader);
+    await openChat(chat, author);
+    await chat.getByRole('button', { name: 'Block User' }).click();
+    await expect(feed.getByText('a post before the block')).toHaveCount(0);
+
+    await say(authorPage, 'a post after the block');
+    await say(friendPage, 'a post by a friend');
+    await expect(feed.getByText('a post by a friend')).toBeVisible();
+    await expect(feed.getByText('a post after the block')).toHaveCount(0);
+    await Promise.all([authorPage, friendPage, feed].map((page) => page.context().close()));
+    // the chat page confirms a block with an alert (for now)
+    expect(problems.filter((p) => p !== `[reader, second tab] alert: You have blocked ${author}`)).toEqual([]);
+});
+
 test('leaving the chat page stops its subscription to incoming messages', async ({ browser }) => {
     const talker = 'talker' + N;
     const listener = 'listener' + N;

@@ -3,8 +3,8 @@
 import { after, before, describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { crashAll, startAll, wejureServer } from './harness.js';
-import { register } from 'wejure-nostr/account.js';
-import { deletePost, post, sendDM, unwrapAll, watchFeed, watchInbox } from 'wejure-nostr/social.js';
+import { login, register } from 'wejure-nostr/account.js';
+import { block, deletePost, post, sendDM, unwrapAll, watchFeed, watchInbox } from 'wejure-nostr/social.js';
 import { KIND } from 'wejure-nostr/core.js';
 import * as C from 'wejure-nostr/communities.js';
 
@@ -48,6 +48,34 @@ describe('live updates', () => {
         await eventually(() => posts.has(event.id));
         await deletePost(alice, event.id);
         await eventually(() => !posts.has(event.id));
+    });
+
+    test('blocking someone, also on another device, drops their posts from a watching feed', async () => {
+        const carol = await register(relays, 'carol', 'carol-pw');
+        const phone = await login(relays, 'carol', 'carol-pw');
+        const posts = new Map();
+        let blocks = 0;
+        const stop = watchFeed(carol, [alice.pk, bob.pk], {
+            onPost: (e) => posts.set(e.id, e),
+            onDelete: () => {},
+            onBlock: (blocked) => {
+                blocks++;
+                for (const [id, e] of posts) if (blocked.has(e.pubkey)) posts.delete(id);
+            },
+        });
+        await new Promise((r) => setTimeout(r, 200));
+        const { event: before } = await post(alice, 'before the block');
+        await eventually(() => posts.has(before.id));
+
+        await block(phone, alice.pk);
+        await eventually(() => blocks === 1);
+        assert.ok(!posts.has(before.id), 'what was shown goes');
+        const { event: hidden } = await post(alice, 'after the block');
+        const { event: shown } = await post(bob, 'bob is not blocked');
+        await eventually(() => posts.has(shown.id));
+        assert.ok(!posts.has(hidden.id), 'new posts stay out');
+        stop();
+        [carol, phone].forEach((s) => s.pool.destroy());
     });
 
     test('a direct message wakes the inbox', async () => {

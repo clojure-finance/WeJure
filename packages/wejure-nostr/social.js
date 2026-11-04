@@ -158,13 +158,32 @@ export async function conversation(s, peerPk) {
         .sort((a, b) => a.ms - b.ms);
 }
 
-// Live feed: onPost(post) for each new post by authors, onDelete(id, pubkey)
-// for each deletion they send (the caller drops the post only if pubkey wrote it).
-export function watchFeed(s, authors, { onPost, onDelete }) {
-    return subscribe(s, [{ kinds: [KIND.POST], authors }, { kinds: [KIND.DELETION], authors }], (e) => {
-        if (e.kind === KIND.POST) onPost(e);
-        else for (const [name, id] of e.tags) if (name === 'e') onDelete(id, e.pubkey);
-    });
+// Live feed: onPost(post) for each new post by authors who are not blocked,
+// onDelete(id, pubkey) for each deletion they send (the caller drops the post
+// only if pubkey wrote it), and onBlock(blocked), with the whole blocklist,
+// whenever the user changes it, here or on another device (the caller drops
+// the posts of the people on it). Posts wait until the blocklist is loaded.
+export function watchFeed(s, authors, { onPost, onDelete, onBlock = () => {} }) {
+    let list = null;   // the mute list the blocklist comes from
+    let blockedSet = new Set();
+    // Whether e is a newer mute list than the one in use (it then is).
+    const take = (e) => {
+        if (!e || e.pubkey !== s.pk || (list && e.created_at <= list.created_at)) return false;
+        list = e;
+        blockedSet = muted(s, e);
+        return true;
+    };
+    const ready = muteEvent(s).then(take, () => false);
+    const filters = [{ kinds: [KIND.POST], authors }, { kinds: [KIND.DELETION], authors }, { kinds: [KIND.MUTE_LIST], authors: [s.pk] }];
+    return subscribe(s, filters, (e) => ready.then(() => {
+        if (e.kind === KIND.MUTE_LIST) {
+            if (take(e)) onBlock(new Set(blockedSet));
+        } else if (e.kind === KIND.POST) {
+            if (!blockedSet.has(e.pubkey)) onPost(e);
+        } else {
+            for (const [name, id] of e.tags) if (name === 'e') onDelete(id, e.pubkey);
+        }
+    }).catch((err) => console.warn('a feed listener failed:', err)));
 }
 
 // Calls onChange whenever something new is gift-wrapped to s (a direct message,

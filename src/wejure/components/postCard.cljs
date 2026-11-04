@@ -17,14 +17,18 @@
   (swap! posts into (for [p (js->clj js-posts :keywordize-keys true)] [(:id p) p])))
 
 (defn watch!
-  "Keeps the posts atom up to date with new posts and deletions; authors nil
-  means the people the user follows. Returns a function that stops it."
+  "Keeps the posts atom up to date with new posts, deletions and blocks;
+  authors nil means the people the user follows. Returns a function that
+  stops it."
   [posts authors]
   (app/watchPosts #js {:authors (some-> authors clj->js)
                        :onPost #(add-posts! posts #js [%])
                        :onDelete (fn [id pk]
                                    (when (= pk (get-in @posts [id :author]))   ;; only the author's own deletion counts
-                                     (swap! posts dissoc id)))}))
+                                     (swap! posts dissoc id)))
+                       :onBlock (fn [pks]
+                                  (let [blocked (set pks)]
+                                    (swap! posts #(into {} (remove (fn [[_ p]] (blocked (:author p)))) %))))}))
 
 (defn- delete-post! [posts {:keys [id]}]
   (.then (app/deletePost id)
