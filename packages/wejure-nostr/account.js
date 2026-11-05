@@ -5,7 +5,7 @@
 import { generateSecretKey, getPublicKey } from 'nostr-tools/pure';
 import { decrypt as nip49Decrypt, encrypt as nip49Encrypt } from 'nostr-tools/nip49';
 import { bech32 } from '@scure/base';
-import { KIND, after, createPool, latest, publish, query, relayUrls, sign } from './core.js';
+import { KIND, after, closePool, createPool, latest, publish, query, relayUrls, sign } from './core.js';
 
 const accountTag = (alias) => `wejure/account/${alias.toLowerCase()}`;
 
@@ -61,6 +61,7 @@ export async function login(relays, alias, password, { mediaServers = [] } = {})
             if (getPublicKey(sk) === claim.pubkey) return session(sk, alias, relays, mediaServers, pool);
         } catch { /* not this claim */ }
     }
+    closePool(pool);
     throw new Error('wrong username or password');
 }
 

@@ -37,7 +37,7 @@ export function subscribe(s, filters, onEvent, relays = s.relays) {
                     }),
                     onclose: () => {
                         sub.closed = true;
-                        if (stopped || sub.replaced || timer) return;
+                        if (stopped || sub.replaced || timer || s.pool.closed) return;
                         droppedAt ??= Math.floor(Date.now() / 1000);
                         timer = setTimeout(restart, 2000);
                     },

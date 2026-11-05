@@ -71,7 +71,28 @@ export function chunked(filter) {
     return parts;
 }
 
-export const createPool = () => new SimplePool({ enablePing: false, enableReconnect: false, verifyEvent: checkEvent });
+// A relay pool that closePool() can shut for good.
+class Pool extends SimplePool {
+    closed = false;
+    ensureRelay(url, params) {
+        return this.closed ? Promise.reject(new Error('the pool is closed')) : super.ensureRelay(url, params);
+    }
+}
+
+export const createPool = () => new Pool({ enablePing: false, enableReconnect: false, verifyEvent: checkEvent });
+
+// Closes pool's connections, and keeps it from opening new ones: whatever
+// still uses it (a retry timer, a late reply) gets an error, or nothing,
+// instead of a new connection. Its subscriptions close first and the sockets a
+// moment later: nostr-tools sends a subscription's CLOSE a step late, which on
+// a socket closed meanwhile makes the browser log an error.
+export async function closePool(pool) {
+    if (pool.closed) return;
+    pool.closed = true;
+    for (const relay of pool.relays.values()) relay.closeAllSubscriptions('the pool is closed');
+    await new Promise((resolve) => setTimeout(resolve));
+    pool.destroy();
+}
 
 export const randomHex = (n) => bytesToHex(crypto.getRandomValues(new Uint8Array(n)));
 

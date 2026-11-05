@@ -300,7 +300,7 @@ function createMirror(pool, base, field, store, paged) {
     // works, while anyone listens there. Catches up the values that have been
     // read; paged mirrors only subscribe for the others (see listen).
     function restoreLater(url) {
-        if (retries.has(url) || !listenedAt(url).length) return;
+        if (retries.has(url) || pool.closed || !listenedAt(url).length) return;
         retries.set(url, setTimeout(async () => {
             retries.delete(url);
             const values = listenedAt(url);

@@ -3,7 +3,7 @@
 // Map or Set interop. The logged-in session lives here.
 import * as account from './account.js';
 import * as C from './communities.js';
-import { KIND, createPool, repair } from './core.js';
+import { KIND, closePool, repair } from './core.js';
 import { fetchBlob, mediaServersOf, upload } from './media.js';
 import { clear, restore, save, siteConfig } from './session.js';
 import { forgetCache } from './cache.js';
@@ -52,30 +52,42 @@ const outcome = (p) => p.then(() => null, (e) => message(e));
 
 // ---- accounts ----
 
-// Login, registration and logout are each followed by a page load, which closes
-// the relay connections; closing them here instead races the CLOSE messages the
-// pool still sends, and the browser logs errors for those.
+// Registration, login and logout close the relay connections they no longer
+// need: the web app loads a new page after each, which would close them
+// anyway, but the mobile app does not.
+
+// Stops the current session's work in this tab: closes its relay connections
+// and drops the communities opened with it.
+function end() {
+    if (current) closePool(current.pool);
+    current = undefined;
+    opened.clear();
+}
 
 // Creates an account; photo is a File or null. Resolves with null, or an error
 // message. The photo is uploaded before anything is published, so a failed
 // upload leaves no half-made account behind.
 export async function register(username, password, photo) {
     const { relays, mediaServers } = siteConfig();
-    if ((await account.claimants(createPool(), relays, username)).length) {
-        return 'Username already exists. Please choose a different username.';
-    }
     const s = account.newAccount(relays, username, { mediaServers });
-    let picture = '';
     try {
-        if (photo) picture = (await upload(s, new Uint8Array(await photo.arrayBuffer()), photo.type || 'application/octet-stream')).sha256;
-    } catch (e) {
-        return `The profile picture could not be uploaded: ${message(e)}`;
-    }
-    try {
-        await account.publishAccount(s, password, { picture });
-        return null;
-    } catch (e) {
-        return `The account could not be saved: ${message(e)}`;
+        if ((await account.claimants(s.pool, relays, username)).length) {
+            return 'Username already exists. Please choose a different username.';
+        }
+        let picture = '';
+        try {
+            if (photo) picture = (await upload(s, new Uint8Array(await photo.arrayBuffer()), photo.type || 'application/octet-stream')).sha256;
+        } catch (e) {
+            return `The profile picture could not be uploaded: ${message(e)}`;
+        }
+        try {
+            await account.publishAccount(s, password, { picture });
+            return null;
+        } catch (e) {
+            return `The account could not be saved: ${message(e)}`;
+        }
+    } finally {
+        closePool(s.pool);   // logging in opens a pool of its own
     }
 }
 
@@ -84,8 +96,10 @@ export async function login(username, password) {
     const { relays, mediaServers } = siteConfig();
     try {
         const s = await account.login(relays, username, password, { mediaServers });
-        save(s, { picture: clean(await account.profile(s, s.pk))?.picture ?? '' });
-        current = undefined;   // restored on next use, like after a reload
+        const picture = clean(await account.profile(s, s.pk))?.picture ?? '';
+        closePool(s.pool);
+        end();
+        save(s, { picture });   // restored on next use, like after a reload
         return null;
     } catch (e) {
         return message(e) === 'wrong username or password' ? 'Wrong username or password.' : message(e);
@@ -95,8 +109,8 @@ export async function login(username, password) {
 export function logout() {
     const s = session();
     if (s) forgetCache(s);   // the decrypted cache of this account on this device
+    end();
     clear();
-    current = undefined;
 }
 
 // ---- media ----
