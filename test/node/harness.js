@@ -6,6 +6,14 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { useWebSocketImplementation } from 'nostr-tools/pool';
+import WebSocket from 'ws';
+
+// The relay pools use the ws package, not Node's own WebSocket: when
+// nostr-tools closes a refused connection in its error handler, Node's reports
+// the error again, over and over until the stack overflows (Node 22.23.1), and
+// the tests that take relays down hit that.
+useWebSocketImplementation(WebSocket);
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, '../..');

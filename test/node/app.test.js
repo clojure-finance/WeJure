@@ -4,12 +4,13 @@
 import { after, before, describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { useWebSocketImplementation } from 'nostr-tools/pool';
+import WebSocket from 'ws';
 import { crashAll, startAll, wejureServer } from './harness.js';
 import * as app from 'wejure-nostr/app.js';
 
 const server = wejureServer(7191);
 
-// The sockets the relay pools open that have not closed yet.
+// The sockets the relay pools open that have not closed yet (ws, as in harness.js).
 const sockets = new Set();
 useWebSocketImplementation(class extends WebSocket {
     constructor(...args) {
